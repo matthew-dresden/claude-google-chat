@@ -1,0 +1,97 @@
+# Architecture
+
+`claude-google-chat` is a single Python package (`claude_google_chat`) exposing the `cgc` CLI, plus a thin Claude Code plugin layer (slash commands + a skill) that shells out to that CLI.
+
+---
+
+## Components
+
+### Plugin layer
+
+- **`commands/*.md`** — slash commands (`chat-setup`, `chat-send`, `chat-listener`). Each becomes `/claude-google-chat:<name>`. They have side effects, so they set `disable-model-invocation: true` and invoke `cgc` via `Bash`.
+- **`skills/google-chat/SKILL.md`** — informational skill documenting the ChatOps protocol so Claude can read and produce structured messages. No side effects; model invocation stays enabled.
+- **`hooks/hooks.json`** — optional `Stop`-hook ping.
+- **`.claude-plugin/plugin.json`** / **`marketplace.json`** — plugin and marketplace manifests.
+
+### Python package (`src/claude_google_chat/`)
+
+| Module | Responsibility |
+|---|---|
+| `messages.py` | **Pure, I/O-free** structured message envelope. `ChatMessage` dataclass, `format_message`, `parse_message`. Single source of truth for the protocol, the status/kind constant sets, and the status→emoji map. |
+| `config.py` | **Single config authority.** `Config` frozen dataclass built by `Config.load()`; merges file + env, validates, fails fast on missing required values, and provides a redacted view for display. |
+| `auth.py` | Google OAuth (InstalledAppFlow). `load_credentials` (load/refresh cached token) and `login` (run the flow, cache token with `0600` perms). Never logs tokens. |
+| `chat.py` | Network I/O to Google Chat: `send_webhook` (POST to the incoming webhook), `list_messages` and `delete_message` (Chat REST API). |
+| `listener.py` | `Listener(config)` with `iter_new_messages()` — event/poll-driven, env-driven cadence and idle timeout, surfaces trigger-prefixed messages, emits JSON lines to stdout. |
+| `cli.py` | Typer `app` wiring the modules into the `cgc` console script (`config`, `auth login`, `chat send`, `listen`, `--version`). |
+| `__main__.py` | `python -m claude_google_chat` → `cli.app()`. |
+
+The package follows SOLID/DRY: `messages.py` is pure and unit-testable, `config.py` is the only place config is resolved, and the protocol constants live in exactly one module.
+
+---
+
+## Data flow
+
+```mermaid
+flowchart LR
+    subgraph CC[Claude Code]
+        CMD["/claude-google-chat:* commands"]
+        SK["google-chat skill (protocol)"]
+    end
+
+    CMD -->|Bash| CLI["cgc CLI (Typer)"]
+
+    subgraph PKG[claude_google_chat]
+        CLI --> CFG[config.py]
+        CLI --> MSG[messages.py]
+        CLI --> AUTH[auth.py]
+        CLI --> CHAT[chat.py]
+        CLI --> LIS[listener.py]
+        LIS --> MSG
+        CHAT --> MSG
+        AUTH --> CFG
+        CHAT --> CFG
+        LIS --> CFG
+    end
+
+    CHAT -->|outbound: incoming webhook POST| GCW[(Google Chat space)]
+    CHAT -->|inbound: Chat REST API| GCAPI[(Google Chat API)]
+    AUTH -->|OAuth InstalledAppFlow| GOAUTH[(Google OAuth)]
+    LIS -->|JSON lines| STDOUT[(stdout)]
+    GCAPI --> GCW
+```
+
+**Outbound (status pings):** Claude runs `/claude-google-chat:chat-send` → `cgc chat send` → `chat.send_webhook` formats a `ChatMessage` via `messages.format_message` and POSTs it to the incoming webhook URL. No OAuth required.
+
+**Inbound (commands):** Claude runs `/claude-google-chat:chat-listener` → `cgc listen` → `listener.Listener` polls the space via the Chat REST API (using OAuth credentials from `auth.load_credentials`), parses each new trigger-prefixed message via `messages.parse_message`, and emits it as a JSON line on stdout for Claude to act on.
+
+---
+
+## Plugin ↔ CLI relationship
+
+The plugin is intentionally thin. All real behavior lives in the `cgc` CLI so it can be used standalone (CI, scripts, hooks) and tested independently of Claude Code. The plugin commands:
+
+- check that `cgc` is on `PATH`,
+- pass user input through to the CLI,
+- and surface the CLI's output and exit code back to the user.
+
+This keeps a single source of truth for behavior and avoids duplicating logic between the plugin and the CLI.
+
+---
+
+## The structured protocol
+
+The protocol is defined once in `messages.py` and documented for Claude in the `google-chat` skill. The envelope (`version`, `kind`, `status`, `text`, `command`, `args`, `ts`, `correlation_id`) is used in both directions:
+
+- Outbound `status`/`result` messages are formatted with a human summary line plus a fenced JSON envelope.
+- Inbound `command` messages are recognized when the text starts with the configured trigger prefix.
+
+`parse_message` and `format_message` round-trip for `status`/`result` kinds. Validation is strict and fails fast on an unknown `version`, `kind`, or `status`. See [usage.md](usage.md) for concrete examples and [configuration.md](configuration.md) for the trigger prefix and cadence settings.
+
+---
+
+## Operational properties
+
+- **Fail-fast:** missing required config, non-2xx webhook responses, missing OAuth client files, and idle-timeout expiry all exit non-zero with clear, actionable messages.
+- **No `sleep`-based readiness:** the listener uses an env-driven poll cadence and an idle timeout, never a fixed sleep as a synchronization primitive.
+- **Secrets stay secret:** never logged or echoed; the cached token is written with restrictive permissions; config lives outside the repo.
+- **12-factor:** stateless processes, config from the environment, logs to stdout.

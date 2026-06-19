@@ -1,0 +1,7 @@
+# Valid fixture config for tests.
+webhook_url = "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=SECRETKEY&token=SECRETTOKEN"
+space_id = "spaces/AAAA"
+oauth_client_file = "/tmp/client_secret.json"
+trigger_prefix = "bot-command:"
+poll_interval = 5.0
+listen_timeout = 30.0

@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          make install
+
+      - name: Lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          make lint
+
+      - name: Format check
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run ruff format --check .
+
+      - name: Typecheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          make typecheck
+
+      - name: Validate JSON manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python -c "import json, pathlib; [json.loads(pathlib.Path(p).read_text()) for p in ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'hooks/hooks.json']]"
+
+      - name: Test
+        shell: bash
+        run: |
+          set -euo pipefail
+          make test
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          make build
