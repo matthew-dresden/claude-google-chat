@@ -1,0 +1,205 @@
+"""Configuration loading and persistence.
+
+Precedence (highest first): explicit value -> environment variable -> user
+config file -> error if a required value is missing. Secrets have no defaults
+and are never echoed in cleartext. The user config file lives under the OS
+config directory (never inside the repo or CWD).
+"""
+
+from __future__ import annotations
+
+import os
+import tomllib
+from collections.abc import Mapping
+from dataclasses import dataclass, fields
+from pathlib import Path
+
+from platformdirs import user_config_path
+
+from claude_google_chat.messages import DEFAULT_TRIGGER_PREFIX
+
+APP_NAME = "claude-google-chat"
+
+# Non-secret tunable defaults (documented in docs/configuration.md).
+DEFAULT_POLL_INTERVAL = 2.0
+DEFAULT_LISTEN_TIMEOUT = 0.0  # 0 == run forever
+
+# Mapping of config keys to their environment-variable overrides.
+ENV_OVERRIDES: dict[str, str] = {
+    "webhook_url": "CGC_WEBHOOK_URL",
+    "space_id": "CGC_SPACE_ID",
+    "oauth_client_file": "CGC_OAUTH_CLIENT_FILE",
+    "token_file": "CGC_TOKEN_FILE",
+    "trigger_prefix": "CGC_TRIGGER_PREFIX",
+    "poll_interval": "CGC_POLL_INTERVAL",
+    "listen_timeout": "CGC_LISTEN_TIMEOUT",
+}
+
+_SECRET_KEYS: frozenset[str] = frozenset({"webhook_url", "token_file"})
+
+
+def config_dir() -> Path:
+    """Return the OS-specific configuration directory for this app."""
+    return user_config_path(APP_NAME)
+
+
+def default_config_path() -> Path:
+    """Return the default path to ``config.toml`` under the config dir."""
+    return config_dir() / "config.toml"
+
+
+def default_token_path() -> Path:
+    """Return the default cached OAuth token path under the config dir."""
+    return config_dir() / "token.json"
+
+
+def _redact(value: str) -> str:
+    """Redact a secret value, keeping only a short non-sensitive hint."""
+    if not value:
+        return value
+    if len(value) <= 8:
+        return "***"
+    return f"{value[:4]}…{value[-4:]}"
+
+
+@dataclass(frozen=True)
+class Config:
+    """Resolved, validated configuration.
+
+    Built via :meth:`load`, which merges the config file and environment and
+    applies non-secret defaults. Required secrets have no defaults.
+    """
+
+    webhook_url: str | None = None
+    space_id: str | None = None
+    oauth_client_file: str | None = None
+    token_file: str | None = None
+    trigger_prefix: str = DEFAULT_TRIGGER_PREFIX
+    poll_interval: float = DEFAULT_POLL_INTERVAL
+    listen_timeout: float = DEFAULT_LISTEN_TIMEOUT
+
+    @classmethod
+    def load(
+        cls,
+        path: Path | None = None,
+        *,
+        env: Mapping[str, str] | None = None,
+        require: tuple[str, ...] = (),
+    ) -> Config:
+        """Load configuration from a TOML file merged with environment vars.
+
+        Args:
+            path: TOML file to read; defaults to :func:`default_config_path`.
+                A missing file is treated as empty (env-only) configuration.
+            env: Environment mapping to read overrides from; defaults to
+                ``os.environ`` (injectable for tests — input-driven).
+            require: Keys that must resolve to a non-empty value. If any are
+                missing the call raises ``ValueError`` (fail fast).
+
+        Returns:
+            A frozen :class:`Config`.
+        """
+        resolved_env: Mapping[str, str] = os.environ if env is None else env
+        file_path = default_config_path() if path is None else path
+
+        file_data: dict[str, object] = {}
+        if file_path.exists():
+            file_data = tomllib.loads(file_path.read_text(encoding="utf-8"))
+
+        merged: dict[str, object] = {}
+        for key, env_var in ENV_OVERRIDES.items():
+            if env_var in resolved_env and resolved_env[env_var] != "":
+                merged[key] = resolved_env[env_var]
+            elif key in file_data:
+                merged[key] = file_data[key]
+
+        def _opt_str(key: str) -> str | None:
+            return str(merged[key]) if key in merged else None
+
+        token_file = (
+            str(merged["token_file"]) if "token_file" in merged else str(default_token_path())
+        )
+        config = cls(
+            webhook_url=_opt_str("webhook_url"),
+            space_id=_opt_str("space_id"),
+            oauth_client_file=_opt_str("oauth_client_file"),
+            token_file=token_file,
+            trigger_prefix=(
+                str(merged["trigger_prefix"])
+                if "trigger_prefix" in merged
+                else DEFAULT_TRIGGER_PREFIX
+            ),
+            poll_interval=(
+                float(str(merged["poll_interval"]))
+                if "poll_interval" in merged
+                else DEFAULT_POLL_INTERVAL
+            ),
+            listen_timeout=(
+                float(str(merged["listen_timeout"]))
+                if "listen_timeout" in merged
+                else DEFAULT_LISTEN_TIMEOUT
+            ),
+        )
+        config.require_keys(require)
+        return config
+
+    def require_keys(self, keys: tuple[str, ...]) -> None:
+        """Raise ``ValueError`` if any required key resolves to empty.
+
+        Fails fast and names the missing key so the error is actionable.
+        """
+        valid = {f.name for f in fields(self)}
+        for key in keys:
+            if key not in valid:
+                raise ValueError(f"unknown required config key {key!r}")
+            value = getattr(self, key)
+            if value is None or value == "":
+                env_var = ENV_OVERRIDES.get(key, "")
+                hint = f" (set {env_var} or add it to config.toml)" if env_var else ""
+                raise ValueError(f"missing required config value {key!r}{hint}")
+
+    def redacted(self) -> dict[str, object]:
+        """Return a dict view of the config with secrets masked.
+
+        Used by ``cgc config show`` so secrets are never echoed in cleartext.
+        """
+        result: dict[str, object] = {}
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.name in _SECRET_KEYS and isinstance(value, str) and value:
+                result[f.name] = _redact(value)
+            else:
+                result[f.name] = value
+        return result
+
+
+def _toml_value(value: object) -> str:
+    """Serialise a scalar value to a minimal TOML literal."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def write_config(values: dict[str, object], path: Path | None = None) -> Path:
+    """Persist config ``values`` to a TOML file under the config dir.
+
+    Uses a minimal stdlib serialiser (no third-party TOML writer needed),
+    while reads go through ``tomllib``. Returns the path written.
+    """
+    file_path = default_config_path() if path is None else path
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    valid = {name for name in ENV_OVERRIDES}
+    lines = ["# claude-google-chat configuration", ""]
+    for key, value in values.items():
+        if key not in valid:
+            raise ValueError(f"unknown config key {key!r}")
+        if value is None:
+            continue
+        lines.append(f"{key} = {_toml_value(value)}")
+    file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    file_path.chmod(0o600)
+    return file_path

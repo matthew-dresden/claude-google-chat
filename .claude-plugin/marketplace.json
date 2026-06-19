@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "claude-google-chat",
+  "owner": {
+    "name": "Matthew Dresden",
+    "email": "contact@matthewdresden.com",
+    "url": "https://github.com/matthew-dresden"
+  },
+  "metadata": {
+    "description": "Marketplace for the claude-google-chat plugin."
+  },
+  "plugins": [
+    {
+      "name": "claude-google-chat",
+      "source": "./",
+      "description": "Two-way Google Chat ChatOps for Claude Code: outbound status pings via incoming webhook, inbound commands via the Chat API, an event-driven listener, and a structured message protocol.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Matthew Dresden",
+        "email": "contact@matthewdresden.com"
+      },
+      "license": "Apache-2.0",
+      "homepage": "https://github.com/matthew-dresden/claude-google-chat",
+      "keywords": [
+        "google-chat",
+        "chatops",
+        "claude-code",
+        "notifications",
+        "webhook"
+      ],
+      "category": "integrations",
+      "tags": [
+        "google-chat",
+        "chatops",
+        "notifications"
+      ]
+    }
+  ]
+}
