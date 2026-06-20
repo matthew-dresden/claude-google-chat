@@ -177,9 +177,7 @@ def _assert_clean(result: CompletionResult, *, context: str) -> None:
         )
 
 
-def _run_complete_bash(
-    comp_line: str, *, env: Mapping[str, str]
-) -> CompletionResult:
+def _run_complete_bash(comp_line: str, *, env: Mapping[str, str]) -> CompletionResult:
     """Drive Typer's bash completion protocol for ``comp_line``.
 
     Reproduces the generated bash function, which calls the CLI with
@@ -205,9 +203,7 @@ def _run_complete_bash(
     return CompletionResult(completed.stdout, completed.stderr, completed.returncode)
 
 
-def _run_complete_zsh(
-    comp_line: str, *, env: Mapping[str, str]
-) -> CompletionResult:
+def _run_complete_zsh(comp_line: str, *, env: Mapping[str, str]) -> CompletionResult:
     """Drive Typer's zsh completion protocol for ``comp_line``.
 
     The generated zsh function passes the words up to the cursor through
@@ -287,7 +283,7 @@ def env_broken_config(config_home: Path) -> dict[str, str]:
     cfg_dir = config_home / "claude-google-chat"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "config.toml").write_text(
-        "this is = not valid toml [[[\npoll_interval = \"not-a-number\"\n",
+        'this is = not valid toml [[[\npoll_interval = "not-a-number"\n',
         encoding="utf-8",
     )
     return _base_env(config_home)
@@ -360,9 +356,7 @@ def test_config_get_completes_keys(shell: str, env_no_config: dict[str, str]) ->
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)
-def test_chat_send_status_completes_statuses(
-    shell: str, env_no_config: dict[str, str]
-) -> None:
+def test_chat_send_status_completes_statuses(shell: str, env_no_config: dict[str, str]) -> None:
     """``cgc chat send --status <TAB>`` offers exactly the allowed statuses.
 
     Note the ``error`` status value is a legitimate candidate: the artifact
@@ -384,9 +378,7 @@ def test_completion_shell_argument(shell: str, env_no_config: dict[str, str]) ->
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)
-def test_auth_login_client_file_does_not_crash(
-    shell: str, env_no_config: dict[str, str]
-) -> None:
+def test_auth_login_client_file_does_not_crash(shell: str, env_no_config: dict[str, str]) -> None:
     """``cgc auth login --client-file <TAB>`` (file path) must not crash.
 
     File completion is delegated to the shell's default mechanism; the CLI must
@@ -422,9 +414,7 @@ def test_space_id_completion_offers_configured_value(
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)
-def test_trigger_prefix_completion_clean(
-    shell: str, env_with_config: dict[str, str]
-) -> None:
+def test_trigger_prefix_completion_clean(shell: str, env_with_config: dict[str, str]) -> None:
     """``cgc clear --trigger-prefix <TAB>`` completes the configured prefix."""
     result = _drive(shell, "cgc clear --trigger-prefix ", env_with_config)
     _assert_clean(result, context=f"{shell}: cgc clear --trigger-prefix <TAB>")
@@ -499,9 +489,7 @@ def _run_cgc(args: list[str], env: Mapping[str, str]) -> subprocess.CompletedPro
 
 
 @pytest.mark.parametrize("shell", ["bash", "zsh", "fish"])
-def test_completion_script_is_nonempty_and_clean(
-    shell: str, env_no_config: dict[str, str]
-) -> None:
+def test_completion_script_is_nonempty_and_clean(shell: str, env_no_config: dict[str, str]) -> None:
     """``cgc completion <shell>`` prints a real script to stdout with no stderr."""
     proc = _run_cgc(["completion", shell], env_no_config)
     assert proc.returncode == 0, proc.stderr
@@ -625,7 +613,7 @@ def test_zsh_completion_script_sources_under_compinit(
         "source /dev/stdin <<'CGC_EOF'\n"
         f"{script.stdout}\n"
         "CGC_EOF\n"
-        'print -- READY\n'
+        "print -- READY\n"
     )
     completed = subprocess.run(
         [_ZSH, "-f", "-c", driver],
