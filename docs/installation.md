@@ -12,7 +12,7 @@ Install **both**: the plugin gives you `/claude-google-chat:*` commands inside C
 ## Prerequisites
 
 - **Python 3.11 or newer** (the CLI uses the stdlib `tomllib` module).
-- **[pipx](https://pipx.pypa.io/)** (recommended) or `uv`/`pip` to install the CLI.
+- **[pipx](https://pipx.pypa.io/)** to install the CLI.
 - **A Google Chat space** you can post to and (for inbound reading) a Google Cloud project.
 - **Claude Code** (for the plugin half).
 
@@ -28,19 +28,6 @@ cgc --help
 ```
 
 pipx keeps the CLI in its own isolated environment and puts `cgc` on your `PATH` — the recommended way to run a Python command-line tool.
-
-### uv
-
-```bash
-uv tool install claude-google-chat
-```
-
-### pip
-
-```bash
-pip install claude-google-chat
-cgc --help
-```
 
 ### From source
 
