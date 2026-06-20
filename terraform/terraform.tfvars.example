@@ -18,3 +18,11 @@ project_id = "my-gcp-project"
 # Optional: set once you know the Chat space id (otherwise add it to config.toml
 # after the app is added to a space).
 # space_id = "spaces/AAAAAAAAAAA"
+
+# Optional Pub/Sub subscription tunables (defaults shown).
+# subscription_ack_deadline_seconds       = 30
+# subscription_message_retention_duration = "600s"
+
+# Optional: override only if your tenant's Chat push publisher account differs
+# from the well-known default.
+# chat_push_service_account = "chat-api-push@system.gserviceaccount.com"

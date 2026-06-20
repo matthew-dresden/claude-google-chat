@@ -85,6 +85,9 @@ id into the rendered `config.toml`.
 | `listen_timeout` | number | `0` | no | Listener idle timeout (seconds); `0` = run forever. |
 | `config_output_path` | string | `~/.config/claude-google-chat/config.toml` | no | Where the rendered `config.toml` is written (leading `~` expanded). |
 | `space_id` | string | `""` | no | Optional Chat space id (`spaces/AAAA`); add later if unknown. |
+| `subscription_ack_deadline_seconds` | number | `30` | no | Pub/Sub subscription ack deadline (10–600s). |
+| `subscription_message_retention_duration` | string | `"600s"` | no | How long Pub/Sub retains unacked Chat events (seconds duration string). |
+| `chat_push_service_account` | string | `chat-api-push@system.gserviceaccount.com` | no | Chat/Workspace Events push SA granted publish rights; override per tenant if it differs. |
 
 ---
 
@@ -113,10 +116,16 @@ chat-api-push@system.gserviceaccount.com
 
 This is the documented account the Chat API uses to publish Workspace Events to
 a customer Pub/Sub topic. If your tenant uses a different push identity, the
-console may report a publish-permission error. In that case, override the member
-in `main.tf` (`google_pubsub_topic_iam_member.chat_push_publisher`) with the
-identity your Chat configuration reports, re-`apply`, and re-test. The grant is
-the only place that account is referenced.
+console may report a publish-permission error. In that case, override the input
+variable in `terraform.tfvars` (no module-source edit required):
+
+```hcl
+chat_push_service_account = "the-identity-your-console-reports@system.gserviceaccount.com"
+```
+
+Then re-`apply` and re-test. The grant
+(`google_pubsub_topic_iam_member.chat_push_publisher`) is the only place that
+account is referenced.
 
 ---
 

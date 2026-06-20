@@ -21,11 +21,8 @@ richer responder.
 
 from __future__ import annotations
 
-import json
-import sys
 import time
 from collections.abc import Callable
-from dataclasses import asdict
 from typing import Any
 
 from claude_google_chat.config import Config
@@ -34,6 +31,7 @@ from claude_google_chat.messages import (
     format_message,
     parse_message,
 )
+from claude_google_chat.polling import PollLoop, run_to_exit_code
 
 # A responder maps an inbound (parsed) command message to an outbound reply, or
 # None to stay silent for that message.
@@ -48,6 +46,13 @@ Fetcher = Callable[[str | None], list[dict[str, Any]]]
 
 class ServeTimeout(RuntimeError):
     """Raised when the responder exceeds its configured idle timeout."""
+
+
+def _timeout_message(timeout: float) -> str:
+    return (
+        f"no Google Chat owner messages handled within {timeout}s idle "
+        "timeout (CGC_LISTEN_TIMEOUT); exiting"
+    )
 
 
 def default_responder(message: ChatMessage) -> ChatMessage:
@@ -126,10 +131,20 @@ class Responder:
         self._responder = responder
         self._fetcher = fetcher or self._default_fetcher
         self._poster = poster or self._default_poster
-        self._clock = clock
-        self._sleeper = sleeper
-        self._seen: set[str] = set()
-        self._since: str | None = None
+        self._loop = PollLoop(
+            config,
+            fetcher=self._fetcher,
+            handler=self._handle,
+            timeout_exc=ServeTimeout,
+            timeout_message=_timeout_message,
+            clock=clock,
+            sleeper=sleeper,
+        )
+
+    @property
+    def _since(self) -> str | None:
+        """Expose the shared poll cursor (highest ``createTime`` seen)."""
+        return self._loop.since
 
     def _default_fetcher(self, since: str | None) -> list[dict[str, Any]]:
         from claude_google_chat.chat import list_messages_as_app
@@ -155,59 +170,33 @@ class Responder:
                 return False
         return True
 
-    def _poll_once(self) -> list[ChatMessage]:
-        """Fetch new messages, handle owner triggers, return replies posted."""
-        raw_messages = self._fetcher(self._since)
-        replies: list[ChatMessage] = []
-        for raw in raw_messages:
-            name = raw.get("name", "")
-            if name and name in self._seen:
-                continue
-            if name:
-                self._seen.add(name)
-            create_time = raw.get("createTime")
-            if create_time and (self._since is None or create_time > self._since):
-                self._since = create_time
-            if not self._should_handle(raw):
-                continue
-            inbound = parse_message(raw.get("text", ""), trigger_prefix=self._config.trigger_prefix)
-            reply = self._responder(inbound)
-            if reply is None:
-                continue
-            self._poster(reply, _thread_key(raw))
-            replies.append(reply)
-        return replies
+    def _handle(self, raw: dict[str, Any]) -> ChatMessage | None:
+        """Respond to a new owner trigger message, posting and returning the reply.
+
+        Returns the reply :class:`ChatMessage` posted, or ``None`` when the
+        message is not an owner trigger or the responder stays silent. The
+        dedup/high-water bookkeeping is handled by the shared poll loop.
+        """
+        if not self._should_handle(raw):
+            return None
+        inbound = parse_message(raw.get("text", ""), trigger_prefix=self._config.trigger_prefix)
+        reply = self._responder(inbound)
+        if reply is None:
+            return None
+        self._poster(reply, _thread_key(raw))
+        return reply
 
     def run(self, *, once: bool = False) -> list[ChatMessage]:
         """Run the responder loop until idle timeout (or once when ``once``).
 
         Returns the list of replies posted (useful for ``--once`` and tests).
+        Each posted reply is emitted as one JSON line to stdout.
 
         Raises:
             ServeTimeout: if ``listen_timeout`` is > 0 and no owner message is
                 handled within that idle window (fail fast).
         """
-        posted: list[ChatMessage] = []
-        last_activity = self._clock()
-        while True:
-            batch = self._poll_once()
-            if batch:
-                last_activity = self._clock()
-                posted.extend(batch)
-                for reply in batch:
-                    sys.stdout.write(json.dumps(asdict(reply), sort_keys=True) + "\n")
-                    sys.stdout.flush()
-
-            if once:
-                return posted
-
-            timeout = self._config.listen_timeout
-            if timeout > 0 and (self._clock() - last_activity) >= timeout:
-                raise ServeTimeout(
-                    f"no Google Chat owner messages handled within {timeout}s idle "
-                    "timeout (CGC_LISTEN_TIMEOUT); exiting"
-                )
-            self._sleeper(self._config.poll_interval)
+        return self._loop.run(once=once)
 
 
 def run(config: Config, *, once: bool = False) -> int:
@@ -217,12 +206,7 @@ def run(config: Config, *, once: bool = False) -> int:
     expiry (fail fast with a clear diagnostic on stderr).
     """
     responder = Responder(config)
-    try:
-        responder.run(once=once)
-    except ServeTimeout as exc:
-        sys.stderr.write(f"{exc}\n")
-        return 1
-    return 0
+    return run_to_exit_code(lambda: responder.run(once=once), ServeTimeout)
 
 
 # Re-export so callers can format replies without importing messages directly.

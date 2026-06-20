@@ -23,6 +23,8 @@ APP_NAME = "claude-google-chat"
 # Non-secret tunable defaults (documented in docs/configuration.md).
 DEFAULT_POLL_INTERVAL = 2.0
 DEFAULT_LISTEN_TIMEOUT = 0.0  # 0 == run forever
+DEFAULT_WEBHOOK_TIMEOUT = 30.0  # seconds; outbound webhook HTTP timeout
+DEFAULT_PAGE_SIZE = 100  # Chat API messages.list page size
 
 # Mapping of config keys to their environment-variable overrides.
 ENV_OVERRIDES: dict[str, str] = {
@@ -33,6 +35,8 @@ ENV_OVERRIDES: dict[str, str] = {
     "trigger_prefix": "CGC_TRIGGER_PREFIX",
     "poll_interval": "CGC_POLL_INTERVAL",
     "listen_timeout": "CGC_LISTEN_TIMEOUT",
+    "webhook_timeout": "CGC_WEBHOOK_TIMEOUT",
+    "page_size": "CGC_PAGE_SIZE",
     # Service-account (app) auth + Workspace Events bootstrap.
     "service_account_file": "CGC_SERVICE_ACCOUNT_FILE",
     "project_id": "CGC_PROJECT_ID",
@@ -83,6 +87,8 @@ class Config:
     trigger_prefix: str = DEFAULT_TRIGGER_PREFIX
     poll_interval: float = DEFAULT_POLL_INTERVAL
     listen_timeout: float = DEFAULT_LISTEN_TIMEOUT
+    webhook_timeout: float = DEFAULT_WEBHOOK_TIMEOUT
+    page_size: int = DEFAULT_PAGE_SIZE
     service_account_file: str | None = None
     project_id: str | None = None
     pubsub_topic: str | None = None
@@ -149,6 +155,14 @@ class Config:
                 float(str(merged["listen_timeout"]))
                 if "listen_timeout" in merged
                 else DEFAULT_LISTEN_TIMEOUT
+            ),
+            webhook_timeout=(
+                float(str(merged["webhook_timeout"]))
+                if "webhook_timeout" in merged
+                else DEFAULT_WEBHOOK_TIMEOUT
+            ),
+            page_size=(
+                int(str(merged["page_size"])) if "page_size" in merged else DEFAULT_PAGE_SIZE
             ),
             service_account_file=_opt_str("service_account_file"),
             project_id=_opt_str("project_id"),

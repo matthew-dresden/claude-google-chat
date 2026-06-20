@@ -42,18 +42,6 @@ from claude_google_chat.messages import ALLOWED_STATUSES
 # shared by the ``--shell`` completer and the ``completion`` command validation.
 SUPPORTED_COMPLETION_SHELLS: tuple[str, ...] = ("bash", "zsh", "fish")
 
-# Config keys whose *values* are useful to complete from the live config (e.g.
-# so ``--space-id <TAB>`` offers the currently-configured space). Only non-secret
-# scalar keys belong here; secrets are never surfaced to the shell.
-_CONFIG_VALUE_KEYS: tuple[str, ...] = (
-    "space_id",
-    "trigger_prefix",
-    "project_id",
-    "pubsub_topic",
-    "space_display_name",
-    "owner_email",
-)
-
 
 def _complete_var(prog_name: str) -> str:
     """Return the Click completion env var for ``prog_name`` (e.g. ``_CGC_COMPLETE``)."""
@@ -129,20 +117,6 @@ def complete_status(incomplete: str) -> list[str | tuple[str, str]]:
 def complete_shell(incomplete: str) -> list[str | tuple[str, str]]:
     """Complete the ``--shell`` choices for ``cgc completion``."""
     return list(_filter(SUPPORTED_COMPLETION_SHELLS, incomplete))
-
-
-@safe_completer
-def complete_config_value(incomplete: str) -> list[str | tuple[str, str]]:
-    """Complete config-derived scalar values (space id, trigger prefix, ...).
-
-    Pulls the currently-configured non-secret scalar values so options like a
-    space id can be tab-completed to the value already in the user's config.
-    """
-    config = _load_config_safely()
-    if config is None:
-        return []
-    values = [str(getattr(config, key)) for key in _CONFIG_VALUE_KEYS if getattr(config, key, None)]
-    return list(_filter(values, incomplete))
 
 
 @safe_completer

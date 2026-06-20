@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from claude_google_chat.config import Config, merge_and_write_config
+from claude_google_chat.validation import validate_space_id
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -36,25 +37,32 @@ if TYPE_CHECKING:
 # Event type emitted by Google Chat when a message is created in a space.
 MESSAGE_CREATED_EVENT = "google.workspace.chat.message.v1.created"
 
-# Chat space resource ids look like ``spaces/AAAA...``.
-_SPACE_RE = re.compile(r"^spaces/[A-Za-z0-9_-]+$")
+# Chat API self-reference for the calling app. This is a fixed magic constant
+# mandated by the Chat API (used to add the *calling* app as a space member),
+# not an arbitrary hard-coded identity.
+APP_MEMBER_NAME = "users/app"
 
 # Fully-qualified Pub/Sub topic, e.g. ``projects/p/topics/t``.
 _TOPIC_RE = re.compile(r"^projects/[^/]+/topics/[^/]+$")
 
 # Substrings in Chat API errors that indicate the manual Configuration step is
 # still pending (the app has no bot identity / is not authorized for Chat yet).
+# Only the unambiguous "app is not configured" phrasings live here; bare HTTP
+# status names (PERMISSION_DENIED / NOT_FOUND) are classified by status code in
+# the call sites so a 404 on a real-but-mistyped space id is not misreported as
+# "configure your Chat app".
 _NOT_CONFIGURED_MARKERS = (
-    "PERMISSION_DENIED",
-    "NOT_FOUND",
     "is not configured",
-    "Chat app",
     "caller does not have permission",
 )
 
 
 class ChatAppNotConfiguredError(RuntimeError):
     """Raised when the manual Chat app Configuration step is not yet done."""
+
+
+class SpaceNotFoundError(RuntimeError):
+    """Raised when a configured space id is not found or the app lacks access."""
 
 
 @dataclass(frozen=True)
@@ -107,8 +115,7 @@ def build_subscription_body(space_id: str, pubsub_topic: str) -> dict[str, Any]:
     Subscribes to ``message.created`` on ``space_id`` and routes events to the
     Pub/Sub ``pubsub_topic``. Validates the space id form, failing fast.
     """
-    if not _SPACE_RE.match(space_id):
-        raise ValueError(f"invalid space id {space_id!r}; expected form 'spaces/<id>'")
+    validate_space_id(space_id)
     return {
         "targetResource": f"//chat.googleapis.com/{space_id}",
         "eventTypes": [MESSAGE_CREATED_EVENT],
@@ -117,13 +124,19 @@ def build_subscription_body(space_id: str, pubsub_topic: str) -> dict[str, Any]:
     }
 
 
-def is_not_configured_error(message: str) -> bool:
-    """Return True if a Chat API error message implies the app is unconfigured.
+def is_not_configured_error(message: str, status: int | None = None) -> bool:
+    """Return True if a Chat API error implies the app is unconfigured.
 
-    Pure string classification so the detection rule is testable without the
-    network. Used to convert opaque API failures into the actionable
-    "configure the Chat app" instruction.
+    Classifies an HTTP 403 (PERMISSION_DENIED) — the signal that the app has no
+    authorized bot identity yet — plus the unambiguous "is not configured" /
+    "caller does not have permission" phrasings, as the pending-Configuration
+    case. A 404 NOT_FOUND on a real-but-mistyped space id is deliberately NOT
+    classified here (the caller maps that to :class:`SpaceNotFoundError`), so the
+    operator gets the correct remediation. Pure so it is testable without the
+    network.
     """
+    if status == 403:
+        return True
     return any(marker in message for marker in _NOT_CONFIGURED_MARKERS)
 
 
@@ -181,20 +194,29 @@ def _ensure_space(config: Config, chat: Resource) -> tuple[str, bool, bool]:
     from googleapiclient.errors import HttpError
 
     if config.space_id:
-        if not _SPACE_RE.match(config.space_id):
-            raise ValueError(f"invalid space id {config.space_id!r}; expected form 'spaces/<id>'")
+        validate_space_id(config.space_id)
         try:
             chat.spaces().members().create(
                 parent=config.space_id,
-                body={"member": {"name": "users/app", "type": "BOT"}},
+                body={"member": {"name": APP_MEMBER_NAME, "type": "BOT"}},
             ).execute()
             return config.space_id, False, True
         except HttpError as exc:
             text = str(exc)
-            if exc.resp is not None and exc.resp.status == 409:
+            status = exc.resp.status if exc.resp is not None else None
+            if status == 409:
                 # Already a member — idempotent success.
                 return config.space_id, False, False
-            if is_not_configured_error(text):
+            if status == 404:
+                # A configured-but-nonexistent space id (typo) or one the app
+                # cannot see: distinct, actionable remediation (not "configure
+                # the Chat app").
+                raise SpaceNotFoundError(
+                    f"Chat space {config.space_id!r} was not found or the app lacks "
+                    "access to it; verify the space id (form 'spaces/<id>') and that "
+                    "the app has been added to that space."
+                ) from exc
+            if is_not_configured_error(text, status):
                 raise ChatAppNotConfiguredError(_not_configured_instructions(config)) from exc
             raise
 
@@ -211,7 +233,8 @@ def _ensure_space(config: Config, chat: Resource) -> tuple[str, bool, bool]:
             .execute()
         )
     except HttpError as exc:
-        if is_not_configured_error(str(exc)):
+        status = exc.resp.status if exc.resp is not None else None
+        if is_not_configured_error(str(exc), status):
             raise ChatAppNotConfiguredError(_not_configured_instructions(config)) from exc
         raise
     space_id = created.get("name", "")
@@ -222,11 +245,29 @@ def _ensure_space(config: Config, chat: Resource) -> tuple[str, bool, bool]:
     return space_id, True, False
 
 
+def _existing_subscription_name(events: Resource, space_id: str) -> str:
+    """Return the resource name of the existing subscription for ``space_id``.
+
+    Used on the idempotent HTTP 409 (ALREADY_EXISTS) path so the reported value
+    is the *real* subscription resource name rather than a synthetic placeholder.
+    Filters by the Chat space target resource. Falls back to an explicit
+    "(existing subscription ...)" marker only if the API returns no match, so the
+    return value is never silently fabricated.
+    """
+    target = f"//chat.googleapis.com/{space_id}"
+    result = events.subscriptions().list(filter=f'target_resource="{target}"').execute()
+    for subscription in result.get("subscriptions", []):
+        name = subscription.get("name")
+        if name:
+            return str(name)
+    return f"(existing subscription for {space_id}; name unavailable)"
+
+
 def _create_subscription(config: Config, events: Resource, space_id: str, topic: str) -> str:
     """Create the message.created Workspace Events subscription; return its name.
 
     Idempotent: an existing subscription (HTTP 409 ALREADY_EXISTS) is treated as
-    success and its target topic is reported back via the configured topic.
+    success and its real resource name is fetched and reported.
     """
     from googleapiclient.errors import HttpError
 
@@ -235,9 +276,10 @@ def _create_subscription(config: Config, events: Resource, space_id: str, topic:
         result = events.subscriptions().create(body=body).execute()
     except HttpError as exc:
         text = str(exc)
-        if exc.resp is not None and exc.resp.status == 409:
-            return f"(existing subscription for {space_id})"
-        if is_not_configured_error(text):
+        status = exc.resp.status if exc.resp is not None else None
+        if status == 409:
+            return _existing_subscription_name(events, space_id)
+        if is_not_configured_error(text, status):
             raise ChatAppNotConfiguredError(_not_configured_instructions(config)) from exc
         raise
     return str(result.get("name", ""))
@@ -257,12 +299,8 @@ def bootstrap(config: Config) -> BootstrapResult:
             not done yet — carrying exact, actionable instructions.
         ValueError / RuntimeError: for missing config or malformed API results.
     """
-    if not config.pubsub_topic:
-        raise ValueError(
-            "missing required config value 'pubsub_topic' (set CGC_PUBSUB_TOPIC or "
-            "add it to config.toml); this is the Pub/Sub topic Terraform created "
-            "for Chat events"
-        )
+    config.require_keys(("pubsub_topic",))
+    assert config.pubsub_topic is not None  # require_keys guarantees a non-empty value
     topic = normalize_pubsub_topic(config.project_id, config.pubsub_topic)
 
     chat = _build_chat_service(config)

@@ -163,18 +163,25 @@ def test_env_supplies_value_absent_from_file() -> None:
 
 def test_every_env_override_is_honoured() -> None:
     """Each declared env var maps onto its config field."""
-    env = {var: f"value-for-{key}" for key, var in ENV_OVERRIDES.items()}
-    # Numeric fields need parseable values.
+    # Numeric fields need parseable values; everything else takes a string marker.
+    numeric_fields = {"poll_interval", "listen_timeout", "webhook_timeout", "page_size"}
+    env = {
+        var: f"value-for-{key}" for key, var in ENV_OVERRIDES.items() if key not in numeric_fields
+    }
     env["CGC_POLL_INTERVAL"] = "3.5"
     env["CGC_LISTEN_TIMEOUT"] = "12.0"
+    env["CGC_WEBHOOK_TIMEOUT"] = "45.0"
+    env["CGC_PAGE_SIZE"] = "250"
     config = Config.load(path=Path("/nonexistent.toml"), env=env)
     for key in ENV_OVERRIDES:
-        value = getattr(config, key)
-        if key in ("poll_interval", "listen_timeout"):
+        if key in numeric_fields:
             continue
+        value = getattr(config, key)
         assert value == f"value-for-{key}", key
     assert config.poll_interval == 3.5
     assert config.listen_timeout == 12.0
+    assert config.webhook_timeout == 45.0
+    assert config.page_size == 250
 
 
 # --------------------------------------------------------------------------- #

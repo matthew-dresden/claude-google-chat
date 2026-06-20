@@ -241,7 +241,7 @@ def test_journey_bootstrap_gate_via_cli_exits_two(
     tmp_path,
 ) -> None:
     """The same gate surfaced through ``cgc bootstrap`` exits 2 with instructions."""
-    fake_chat_service.member_create_error = _http_error(404, "NOT_FOUND")
+    fake_chat_service.member_create_error = _http_error(403, "PERMISSION_DENIED")
     monkeypatch.setattr(chat_module, "load_app_credentials", lambda config, scopes=None: object())
     monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
 
@@ -262,6 +262,41 @@ def test_journey_bootstrap_gate_via_cli_exits_two(
 
     assert result.exit_code == 2
     assert "not configured yet" in result.output
+
+
+def test_journey_bootstrap_mistyped_space_id_exits_two_with_space_not_found(
+    monkeypatch,
+    fake_chat_service,
+    tmp_path,
+) -> None:
+    """A configured-but-nonexistent space id (typo) gets the accurate remediation.
+
+    A 404 on the membership call is space-not-found, not the configuration gate,
+    so ``cgc bootstrap`` exits 2 with a "space not found" message rather than the
+    long "configure your Chat app" instructions.
+    """
+    fake_chat_service.member_create_error = _http_error(404, "NOT_FOUND")
+    monkeypatch.setattr(chat_module, "load_app_credentials", lambda config, scopes=None: object())
+    monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
+
+    sa_file = tmp_path / "sa.json"
+    sa_file.write_text("{}", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["bootstrap"],
+        env=_cli_env(
+            CGC_SERVICE_ACCOUNT_FILE=str(sa_file),
+            CGC_SPACE_ID="spaces/ZZZZ",
+            CGC_PROJECT_ID="test-project",
+            CGC_PUBSUB_TOPIC="chat-events",
+        ),
+    )
+
+    assert result.exit_code == 2
+    assert "not found" in result.output.lower()
+    assert "spaces/ZZZZ" in result.output
+    assert "not configured yet" not in result.output
 
 
 # --------------------------------------------------------------------------- #
