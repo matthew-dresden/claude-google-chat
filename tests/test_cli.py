@@ -598,3 +598,159 @@ def test_clear_missing_config_fails_fast(
     result = runner.invoke(cli.app, ["clear"])
     assert result.exit_code != 0
     assert isinstance(result.exception, ValueError)
+
+
+def test_clear_trigger_prefix_override(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_cli_config(space_id=SPACE_ID, oauth_client_file="/tmp/client.json")
+    messages = [
+        {"name": f"{SPACE_ID}/messages/1", "text": "ops: deploy"},
+        {"name": f"{SPACE_ID}/messages/2", "text": f"{DEFAULT_TRIGGER_PREFIX} ignored"},
+    ]
+    monkeypatch.setattr("claude_google_chat.chat.list_messages", lambda config: messages)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "claude_google_chat.chat.delete_message",
+        lambda config, name: deleted.append(name),
+    )
+    result = runner.invoke(cli.app, ["clear", "--trigger-prefix", "ops:"])
+    assert result.exit_code == 0
+    assert deleted == [f"{SPACE_ID}/messages/1"]
+
+
+# --------------------------------------------------------------------------- #
+# config get.
+# --------------------------------------------------------------------------- #
+
+
+def test_config_get_prints_value(runner: CliRunner, write_cli_config: Callable[..., Path]) -> None:
+    write_cli_config(space_id=SPACE_ID)
+    result = runner.invoke(cli.app, ["config", "get", "space_id"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == SPACE_ID
+
+
+def test_config_get_masks_secret(runner: CliRunner, write_cli_config: Callable[..., Path]) -> None:
+    write_cli_config(webhook_url=WEBHOOK_URL)
+    result = runner.invoke(cli.app, ["config", "get", "webhook_url"])
+    assert result.exit_code == 0
+    assert "TEST_KEY" not in result.stdout
+    assert "TEST_TOKEN" not in result.stdout
+
+
+def test_config_get_unknown_key_exits_code_2(runner: CliRunner, cli_config_path: Path) -> None:
+    result = runner.invoke(cli.app, ["config", "get", "not_a_real_key"])
+    assert result.exit_code == 2
+    assert "unknown config key" in result.stderr
+
+
+# --------------------------------------------------------------------------- #
+# auth login --client-file override.
+# --------------------------------------------------------------------------- #
+
+
+def test_auth_login_client_file_override(
+    runner: CliRunner,
+    cli_config_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = tmp_path / "client_secret.json"
+    client.write_text("{}", encoding="utf-8")
+    login = MagicMock()
+    monkeypatch.setattr("claude_google_chat.auth.login", login)
+    result = runner.invoke(cli.app, ["auth", "login", "--client-file", str(client)])
+    assert result.exit_code == 0
+    login.assert_called_once()
+    config_arg = login.call_args.args[0]
+    assert config_arg.oauth_client_file == str(client)
+
+
+def test_auth_login_client_file_missing_path_exits_nonzero(
+    runner: CliRunner,
+    cli_config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    login = MagicMock()
+    monkeypatch.setattr("claude_google_chat.auth.login", login)
+    result = runner.invoke(cli.app, ["auth", "login", "--client-file", "/does/not/exist.json"])
+    assert result.exit_code != 0
+    login.assert_not_called()
+
+
+# --------------------------------------------------------------------------- #
+# serve / listen --space-id override.
+# --------------------------------------------------------------------------- #
+
+
+def test_serve_space_id_override(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_cli_config(service_account_file="/tmp/sa.json", space_id=SPACE_ID)
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr("claude_google_chat.serve.run", run)
+    result = runner.invoke(cli.app, ["serve", "--once", "--space-id", "spaces/OTHER"])
+    assert result.exit_code == 0
+    config_arg = run.call_args.args[0]
+    assert config_arg.space_id == "spaces/OTHER"
+
+
+def test_listen_space_id_override(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_cli_config(space_id=SPACE_ID, oauth_client_file="/tmp/client.json")
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr("claude_google_chat.listener.run", run)
+    result = runner.invoke(cli.app, ["listen", "--space-id", "spaces/OTHER"])
+    assert result.exit_code == 0
+    config_arg = run.call_args.args[0]
+    assert config_arg.space_id == "spaces/OTHER"
+
+
+# --------------------------------------------------------------------------- #
+# completion command.
+# --------------------------------------------------------------------------- #
+
+
+def test_completion_bash_prints_script(runner: CliRunner) -> None:
+    result = runner.invoke(cli.app, ["completion", "bash"])
+    assert result.exit_code == 0
+    assert "_CGC_COMPLETE" in result.stdout
+    assert "complete" in result.stdout
+
+
+def test_completion_unsupported_shell_exits_code_2(runner: CliRunner) -> None:
+    result = runner.invoke(cli.app, ["completion", "powershell"])
+    assert result.exit_code == 2
+    assert "powershell" in result.stderr
+
+
+def test_completion_install_appends_to_rc(
+    runner: CliRunner,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = runner.invoke(cli.app, ["completion", "zsh", "--install"])
+    assert result.exit_code == 0
+    assert "completion installed" in result.stdout
+    rc = tmp_path / ".zshrc"
+    assert rc.exists()
+    assert "_CGC_COMPLETE=complete_zsh" in rc.read_text(encoding="utf-8")
+
+
+def test_completion_undetectable_shell_exits_code_2(
+    runner: CliRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claude_google_chat.cli.detect_shell", lambda: None)
+    result = runner.invoke(cli.app, ["completion"])
+    assert result.exit_code == 2
+    assert "could not detect" in result.stderr
