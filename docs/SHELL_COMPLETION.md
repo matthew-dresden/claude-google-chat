@@ -170,7 +170,9 @@ Once enabled, tab completion suggests **commands, sub-groups, options, and argum
 | `cgc chat send --status <TAB>` | `info`, `working`, `success`, `error`, `blocked`. |
 | `cgc completion <shell>` / `--shell` | `bash`, `zsh`, `fish`. |
 | `cgc auth login --client-file <TAB>` | File paths (native shell file completion). |
-| `cgc listen --space-id` | The `space_id` from your current config, if set. |
+| `cgc connect <name>` / `cgc disconnect <name>` / `cgc listen --session` | Registered session names from your `sessions_file`. |
+| `cgc connect --space` / `cgc listen --space-id` | The `space_id` from your current config, if set. |
+| `cgc listen --thread` | The configured `threads` (`CGC_THREADS` / config `threads`), if any. |
 | `cgc clear --trigger-prefix` | The `trigger_prefix` from your current config (defaults to `claude:`). |
 
 The config-key and `--status` value sets are derived from the CLI's single sources of truth (`ENV_OVERRIDES` and `ALLOWED_STATUSES`), so suggestions can never drift from the commands `cgc` actually accepts.
@@ -199,7 +201,7 @@ If you omit the shell argument, `cgc` uses the detected shell. When the shell ca
 After enabling and opening a new shell:
 
 ```bash
-cgc <TAB><TAB>                 # lists top-level commands (config, auth, chat, listen, clear, completion)
+cgc <TAB><TAB>                 # lists top-level commands (setup, doctor, connect, disconnect, session, config, auth, chat, listen, clear, status, completion)
 cgc chat send --status <TAB>   # lists: blocked  error  info  success  working
 cgc config get <TAB>           # lists known config keys with env-var hints
 ```
