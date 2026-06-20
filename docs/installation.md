@@ -12,7 +12,7 @@ Install **both**: the plugin gives you `/claude-google-chat:*` commands inside C
 ## Prerequisites
 
 - **Python 3.11 or newer** (the CLI uses the stdlib `tomllib` module).
-- **[uv](https://docs.astral.sh/uv/)** (recommended) or `pipx`/`pip` to install the CLI.
+- **[pipx](https://pipx.pypa.io/)** (recommended) or `uv`/`pip` to install the CLI.
 - **A Google Chat space** you can post to and (for inbound reading) a Google Cloud project.
 - **Claude Code** (for the plugin half).
 
@@ -20,26 +20,19 @@ Install **both**: the plugin gives you `/claude-google-chat:*` commands inside C
 
 ## 1. Install the CLI (Python)
 
-### uv (recommended)
+### pipx (recommended)
 
 ```bash
-uv tool install claude-google-chat        # from PyPI once published
-```
-
-From source:
-
-```bash
-git clone https://github.com/matthew-dresden/claude-google-chat
-cd claude-google-chat
-uv sync
-uv run cgc --help
-```
-
-### pipx
-
-```bash
-pipx install claude-google-chat
+pipx install claude-google-chat        # from PyPI once published
 cgc --help
+```
+
+pipx keeps the CLI in its own isolated environment and puts `cgc` on your `PATH` — the recommended way to run a Python command-line tool.
+
+### uv
+
+```bash
+uv tool install claude-google-chat
 ```
 
 ### pip
@@ -47,6 +40,15 @@ cgc --help
 ```bash
 pip install claude-google-chat
 cgc --help
+```
+
+### From source
+
+```bash
+git clone https://github.com/matthew-dresden/claude-google-chat
+cd claude-google-chat
+uv sync
+uv run cgc --help
 ```
 
 Verify:

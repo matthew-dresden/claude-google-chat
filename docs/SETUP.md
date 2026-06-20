@@ -70,7 +70,7 @@ Install these once on the machine that will run the integration.
    ```
 5. **The `cgc` CLI** (this package):
    ```bash
-   uv tool install claude-google-chat
+   pipx install claude-google-chat
    cgc --version
    ```
    Or from a source checkout:
