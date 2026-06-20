@@ -1,7 +1,7 @@
 name: Release
 
-# Mirrors kanon's "validate-on-merge + automated tag release" mechanism, adapted
-# to a uv + hatchling project. On every push to main this workflow re-validates
+# Validate-on-merge + automated tag release for a uv + hatchling project.
+# On every push to main this workflow re-validates
 # (build + artifact check), then derives the release version from the single
 # source of truth (pyproject.toml [project.version], kept in sync with
 # src/claude_google_chat/__init__.py) and cuts an annotated git tag `v<version>`

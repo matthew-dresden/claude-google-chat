@@ -11,9 +11,10 @@ API *Configuration* console page, for which **no API exists**.
 
 > **Auth model:** the core path uses a **service account** (the Chat *app*
 > identity). It does **not** use user OAuth and does **not** use incoming
-> webhooks. The bot posts and reads as the app, authenticated by the
-> service-account credentials that Terraform creates and `cgc bootstrap` wires
-> up.
+> webhooks. The bot posts and reads as the app. Terraform creates the service
+> account but does **not** download a key file; you authenticate as that account
+> with Application Default Credentials (impersonation, or a key you obtain
+> out-of-band) and `cgc bootstrap` wires the rest up.
 
 Each step is tagged:
 
@@ -34,11 +35,11 @@ policy, never assume success; always verify.
 | 1 | Authenticate gcloud / set ADC | **MANUAL: you** | `gcloud auth login` + `gcloud auth application-default login` |
 | 2 | Configure Terraform variables | **MANUAL: you** | edit `terraform.tfvars` |
 | 3 | `terraform init` | **AUTOMATED: terraform** | `terraform init` |
-| 4 | `terraform apply` — enable APIs, create service account, key, IAM | **AUTOMATED: terraform** | `terraform apply` |
-| 5 | Read Terraform outputs (service-account email, key path, project id) | **AUTOMATED: terraform** | `terraform output` |
-| 6 | **Google Chat API → Configuration** page (app name, avatar, app auth = SA email, connection settings, visibility) | **MANUAL: you** | console clicks (no API exists) |
+| 4 | `terraform apply` — enable APIs, create service account, Pub/Sub topic + subscription, IAM | **AUTOMATED: terraform** | `terraform apply` |
+| 5 | Read Terraform outputs (service-account email, project id, Pub/Sub topic, config path) | **AUTOMATED: terraform** | `terraform output` |
+| 6 | **Google Chat API → Configuration** page (app name, avatar, app auth = SA email, connection = Pub/Sub topic, visibility) | **MANUAL: you** | console clicks (no API exists) |
 | 7 | Workspace-admin approval / app allowlisting (if required) | **MANUAL: you** | Admin console |
-| 8 | `cgc bootstrap` — point CLI at SA key, register the space, verify app identity | **AUTOMATED: cgc** | `cgc bootstrap` |
+| 8 | `cgc bootstrap` — join/create the space, register the Workspace Events subscription, merge config | **AUTOMATED: cgc** | `cgc bootstrap` |
 | 9 | Add the app to a Chat space | **MANUAL: you** | Chat client |
 | 10 | `cgc serve` — run the integration | **AUTOMATED: cgc** | `cgc serve` |
 | 11 | Verify a test message round-trips | **MANUAL: you** + **AUTOMATED: cgc** | post in Chat, observe `cgc` output |
@@ -163,16 +164,25 @@ terraform apply     # type 'yes' to confirm
 
 - **Enables the required Google APIs** on the project:
   - **Google Chat API** (`chat.googleapis.com`)
+  - **Cloud Pub/Sub API** (`pubsub.googleapis.com`)
+  - **Google Workspace Events API** (`workspaceevents.googleapis.com`)
   - **IAM API** (`iam.googleapis.com`)
   - **Cloud Resource Manager API** (`cloudresourcemanager.googleapis.com`)
 - **Creates the service account** that is the Chat **app identity**
-  (e.g. `claude-chat-app@YOUR_PROJECT_ID.iam.gserviceaccount.com`).
-- **Creates a service-account key** and writes it to a local file (path is a
-  Terraform output; the key is gitignored and never committed).
-- **Grants the IAM roles** the app needs to call the Chat API as itself.
+  (e.g. `cgc-chat@YOUR_PROJECT_ID.iam.gserviceaccount.com`).
+- **Creates the Pub/Sub topic + subscription** for event delivery and the IAM
+  grants that let the Chat push system account publish and the app subscribe.
+- **Renders a `config.toml`** to the cgc OS config path with the discovered
+  values (project id, topic, cadence settings).
 
+> **Note on credentials:** Terraform creates the service-account **identity** but
+> does **not** download a key file — there is no key output. Authenticate as the
+> service account with Application Default Credentials (impersonation, or a key
+> you obtain out-of-band) and point cgc at those credentials via
+> `CGC_SERVICE_ACCOUNT_FILE` in step 8.
+>
 > **Note on the boundary:** Terraform can enable the APIs and create the
-> service-account identity + key, but it **cannot** fill in the Chat app
+> service-account identity, but it **cannot** fill in the Chat app
 > *Configuration* page (step 6) — Google exposes **no API** for that screen.
 > That is the single manual step this design cannot remove.
 
@@ -193,18 +203,22 @@ enablement can take a moment to propagate, and Terraform is idempotent
 You need these values for the manual console step and for `cgc bootstrap`:
 
 ```bash
-terraform output service_account_email     # e.g. claude-chat-app@PROJECT.iam.gserviceaccount.com
-terraform output service_account_key_path  # local path to the SA key JSON
-terraform output project_id                # YOUR_PROJECT_ID
+terraform output service_account_email   # e.g. cgc-chat@PROJECT.iam.gserviceaccount.com
+terraform output project_id              # YOUR_PROJECT_ID
+terraform output pubsub_topic            # projects/PROJECT/topics/cgc-chat-events-...
+terraform output config_file_path        # path of the rendered config.toml
+terraform output -raw manual_next_steps  # the exact console steps + values to enter
 ```
 
-Copy the **`service_account_email`** value — you will paste it into the console
-in step 6.
+Copy the **`service_account_email`** value (for the console in step 6) and the
+**`pubsub_topic`** value (for the console connection setting in step 6 and for
+`cgc bootstrap` in step 8).
 
-**Verify:** all three outputs print non-empty values. The key file must exist:
+**Verify:** the outputs print non-empty values:
 
 ```bash
-test -f "$(terraform output -raw service_account_key_path)" && echo "key present"
+test -n "$(terraform output -raw service_account_email)" && echo "SA email present"
+test -n "$(terraform output -raw pubsub_topic)"          && echo "topic present"
 ```
 
 ---
@@ -226,12 +240,11 @@ That is the **Google Chat API → Configuration** tab. Fill it in exactly:
 3. **Description** — a short line, e.g. `Two-way ChatOps for Claude Code`.
 4. **Functionality** — enable **"Receive 1:1 messages"** and **"Join spaces and
    group conversations"** so the app can be added to a space and read messages.
-5. **Connection settings** — choose **"App URL"** is *not* used for this design.
-   Select **"HTTP endpoint"** only if you front the app with a webhook receiver;
-   for the service-account pull/poll path select the connection option that does
-   **not** require a public endpoint (the app reads via the Chat REST API using
-   the service account). Leave any HTTP endpoint URL blank for the
-   service-account path.
+5. **Connection settings** — under **"App URL"**, select **"Cloud Pub/Sub"**
+   and enter the **`pubsub_topic`** value from step 5 as the events topic
+   (`projects/YOUR_PROJECT_ID/topics/cgc-chat-events-...`). This is the
+   event-delivery path the Terraform module provisions; do **not** configure an
+   HTTP endpoint URL.
 6. **Authentication / App credentials** — set the app to authenticate **as the
    service account** and paste the **`service_account_email`** value from
    step 5 (the `...@YOUR_PROJECT_ID.iam.gserviceaccount.com` address).
@@ -273,33 +286,47 @@ apps"** dialog. If it does not appear, allowlisting is incomplete.
 ## 8. Bootstrap the CLI — [AUTOMATED: cgc]
 
 `cgc bootstrap` does the API-level wiring Terraform left to the app layer:
-points the CLI at the service-account key, confirms the Chat API answers **as
-the app identity**, and records the target space.
+authenticating as the service account, it **joins** the target Chat space (or
+**creates** one from a display name), registers the Google **Workspace Events**
+`message.created` subscription that delivers to the Pub/Sub topic, and merges the
+discovered values into `config.toml`.
 
 Provide the inputs from Terraform (all env-driven, nothing hardcoded). From the
-`terraform/` directory you can feed the outputs straight in:
+`terraform/` directory you can feed the outputs straight in. `cgc bootstrap`
+requires `service_account_file` **and** `pubsub_topic`, plus either a
+`space_id` to join or a `space_display_name` to create:
 
 ```bash
 export CGC_PROJECT_ID="$(terraform output -raw project_id)"
-export CGC_SERVICE_ACCOUNT_FILE="$(terraform output -raw service_account_key_path)"
+export CGC_PUBSUB_TOPIC="$(terraform output -raw pubsub_topic)"
+
+# Point cgc at credentials for the service account from step 5
+# (impersonation via ADC, or a key you obtained out-of-band):
+export CGC_SERVICE_ACCOUNT_FILE="/path/to/service-account-credentials.json"
+
+# Join an existing space (its id) OR create a new one (a display name):
+export CGC_SPACE_ID="spaces/AAAA..."          # to join an existing space, or
+# export CGC_SPACE_DISPLAY_NAME="Claude Ops"  # to create a new space
 
 cgc bootstrap
 ```
 
 `cgc bootstrap` will:
 
-- Persist `project_id` and `service_account_file` into the user config
-  (`config.toml` under the OS config dir — never in the repo).
-- Call the Chat API with the service-account credentials and verify the app
-  identity responds (fails fast with a clear message if the SA cannot
-  authenticate — usually means step 6 is incomplete).
-- Print the **app/service-account identity** it authenticated as.
+- Authenticate as the service account and **join** the configured space (or
+  **create** one when only `space_display_name` is set). Fails fast with exact
+  instructions if step 6 is incomplete (HTTP 403); a mistyped/inaccessible space
+  id (HTTP 404) reports a distinct "space not found" error.
+- Create the **Workspace Events `message.created` subscription** delivering to
+  the **Pub/Sub topic** (idempotent — an existing subscription is reused).
+- Merge the discovered `space_id`, subscription, and `pubsub_topic` into the
+  user config (`config.toml` under the OS config dir — never in the repo).
 
 **Verify (do not skip):**
 
 ```bash
-cgc bootstrap        # must exit 0 and print the authenticated app identity
-cgc config show      # secrets masked; confirms project_id + service_account_file are set
+cgc bootstrap        # must exit 0 and print the space, subscription, and topic
+cgc config show      # secrets masked; confirms project_id + service_account_file + space_id
 ```
 
 If `cgc bootstrap` reports it cannot authenticate as the Chat app, the most
@@ -316,9 +343,12 @@ In the **Google Chat** client:
 1. Open or create the **space** you want Claude to use.
 2. Click the space name → **Apps & integrations** → **Add apps**.
 3. Search for your app by the **name you set in step 6** and **Add** it.
-4. Copy the **space id** for the next step. The resource id looks like
-   `spaces/AAAA...`. (You can also have `cgc` list spaces the app is a member of
-   — see `cgc --help` for the spaces subcommand.)
+4. Copy the **space id**. The resource id looks like `spaces/AAAA...`.
+
+> **Ordering:** if you set `CGC_SPACE_ID` in step 8, add the app to that space
+> **before** running `cgc bootstrap` so it can join. Alternatively, set
+> `CGC_SPACE_DISPLAY_NAME` instead and let `cgc bootstrap` create the space —
+> then this step is just confirming the app is present.
 
 Record the space id as an input:
 
@@ -397,13 +427,13 @@ To remove everything Terraform created, in reverse:
    cd terraform
    terraform destroy     # type 'yes' to confirm
    ```
-   This deletes the service account, its key, and the IAM bindings Terraform
-   created. (Whether the **APIs** are disabled on destroy depends on the
+   This deletes the service account, the Pub/Sub topic + subscription, the
+   rendered `config.toml`, and the IAM bindings Terraform created. (Whether the **APIs** are disabled on destroy depends on the
    `disable_on_destroy` setting in the Terraform config; leaving APIs enabled is
    harmless.)
 5. **Remove local credentials / config** *(optional cleanup)*:
    ```bash
-   rm -f "$(terraform output -raw service_account_key_path 2>/dev/null)"
+   # Remove any service-account credentials you obtained out-of-band, then:
    cgc config show       # confirm what remains; remove the config file if desired
    ```
 

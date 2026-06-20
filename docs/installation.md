@@ -134,7 +134,7 @@ cgc chat send --status info --text "hello from claude-google-chat"
 cgc listen --once                                # drains pending messages and exits
 ```
 
-A successful send returns an HTTP 2xx. If anything required is missing, the CLI fails fast with a clear message naming the missing key — it never silently falls back to a default for a secret.
+A successful send prints `sent` and exits `0`; a failed send exits non-zero with the HTTP status code and a redacted URL. If anything required is missing, the CLI fails fast with a clear message naming the missing key — it never silently falls back to a default for a secret.
 
 ---
 

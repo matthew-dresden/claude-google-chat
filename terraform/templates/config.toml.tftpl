@@ -6,14 +6,19 @@
 # (src/claude_google_chat/config.py).
 
 # --- Chat app (service-account) identity ---
-project_id            = "${project_id}"
-service_account_email = "${service_account_email}"
+project_id = "${project_id}"
+
+# The Chat app runs AS this service account: ${service_account_email}
+# This module does NOT download a key file. Authenticate with Application
+# Default Credentials for that account (e.g. impersonation or a key obtained
+# out-of-band) and point cgc at it via the `service_account_file` key below or
+# the CGC_SERVICE_ACCOUNT_FILE environment variable. See manual_next_steps.
+# service_account_file = "/path/to/service-account-credentials.json"
 
 # --- Event-driven delivery ---
-# pubsub_topic / pubsub_subscription are empty when event-driven mode is off,
-# in which case the listener falls back to polling on poll_interval.
-pubsub_topic        = "${pubsub_topic}"
-pubsub_subscription = "${pubsub_subscription}"
+# pubsub_topic is empty when event-driven mode is off, in which case the
+# listener falls back to polling on poll_interval.
+pubsub_topic = "${pubsub_topic}"
 
 # --- Chat space ---
 # Filled in here when known at apply time; otherwise set it after the Chat app
