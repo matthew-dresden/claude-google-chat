@@ -333,7 +333,17 @@ def _drive(shell: str, comp_line: str, env: Mapping[str, str]) -> CompletionResu
 
 # Top-level commands a fresh ``cgc <TAB>`` must offer (subset asserted so the
 # test does not over-specify ordering or future additions).
-_EXPECTED_TOP_LEVEL = {"config", "auth", "chat", "listen", "clear", "completion"}
+_EXPECTED_TOP_LEVEL = {
+    "config",
+    "auth",
+    "chat",
+    "listen",
+    "clear",
+    "completion",
+    "connect",
+    "disconnect",
+    "session",
+}
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)
@@ -348,10 +358,10 @@ def test_top_level_commands(shell: str, env_no_config: dict[str, str]) -> None:
 def test_partial_co_completes_config_and_completion(
     shell: str, env_no_config: dict[str, str]
 ) -> None:
-    """``cgc co<TAB>`` narrows to ``completion`` and ``config`` only."""
+    """``cgc co<TAB>`` narrows to the ``co``-prefixed commands only."""
     result = _drive(shell, "cgc co", env_no_config)
     _assert_clean(result, context=f"{shell}: cgc co<TAB>")
-    assert set(result.values) == {"completion", "config"}, result.values
+    assert set(result.values) == {"completion", "config", "connect"}, result.values
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)

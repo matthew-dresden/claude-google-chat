@@ -47,6 +47,10 @@ class ChatMessage:
             (``spaces/.../threads/...``) the message belongs to, so a consumer
             knows which thread to reply into. ``None`` when the message is not
             thread-scoped or the thread is unknown.
+        session_name: Optional name of the session this message was routed to by
+            ``cgc listen --session NAME``. Surfaced on each routed event so a
+            consumer knows which session owns it. ``None`` for non-session
+            (plain) listening.
         version: Envelope version (always ``"1"``).
     """
 
@@ -58,6 +62,7 @@ class ChatMessage:
     ts: str | None = None
     correlation_id: str | None = None
     thread_name: str | None = None
+    session_name: str | None = None
     version: str = ENVELOPE_VERSION
 
 
@@ -99,6 +104,7 @@ def _envelope_dict(msg: ChatMessage) -> dict[str, object]:
         "ts": msg.ts,
         "correlation_id": msg.correlation_id,
         "thread_name": msg.thread_name,
+        "session_name": msg.session_name,
     }
 
 
@@ -169,6 +175,7 @@ def _parse_envelope(raw: str) -> ChatMessage:
         ts=data.get("ts"),
         correlation_id=data.get("correlation_id"),
         thread_name=data.get("thread_name"),
+        session_name=data.get("session_name"),
         version=str(data.get("version", "")),
     )
     _validate(msg)

@@ -688,6 +688,198 @@ def test_listen_without_thread_flag_preserves_config_threads(
 
 
 # --------------------------------------------------------------------------- #
+# connect / session list / disconnect.
+# --------------------------------------------------------------------------- #
+
+
+def test_connect_creates_session_and_prints_routing(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`cgc connect NAME` opens a thread and registers the session."""
+    sessions_file = tmp_path / "sessions.json"
+    write_cli_config(
+        webhook_url=WEBHOOK_URL,
+        space_id=SPACE_ID,
+        sessions_file=str(sessions_file),
+    )
+    # Patch the threaded send so no webhook POST occurs; return a stable thread.
+    monkeypatch.setattr(
+        "claude_google_chat.chat.send_webhook",
+        lambda config, msg, thread_key=None: f"{SPACE_ID}/threads/{thread_key}",
+    )
+
+    result = runner.invoke(cli.app, ["connect", "alpha"])
+    assert result.exit_code == 0
+    assert "alpha" in result.stdout
+    assert "DISPATCHER" in result.stdout  # first session auto-dispatcher
+
+    from claude_google_chat.sessions import FileSessionRegistry
+
+    sessions = FileSessionRegistry(sessions_file).load()
+    assert "alpha" in sessions
+    assert sessions["alpha"].primary_thread is not None
+    assert sessions["alpha"].dispatcher is True
+
+
+def test_connect_is_idempotent(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions_file = tmp_path / "sessions.json"
+    write_cli_config(webhook_url=WEBHOOK_URL, space_id=SPACE_ID, sessions_file=str(sessions_file))
+    sends: list[str | None] = []
+
+    def _send(config: object, msg: object, thread_key: str | None = None) -> str:
+        sends.append(thread_key)
+        return f"{SPACE_ID}/threads/{thread_key}"
+
+    monkeypatch.setattr("claude_google_chat.chat.send_webhook", _send)
+
+    runner.invoke(cli.app, ["connect", "alpha"])
+    runner.invoke(cli.app, ["connect", "alpha"])
+    # Only the first connect posted an opening message.
+    assert sends == ["alpha"]
+
+
+def test_connect_missing_webhook_fails_fast(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    write_cli_config(space_id=SPACE_ID, sessions_file=str(tmp_path / "s.json"))
+    result = runner.invoke(cli.app, ["connect", "alpha"])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, ValueError)
+
+
+def test_connect_webhook_returns_no_thread_name_fails_fast(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A webhook send that yields no thread.name fails fast (cannot bind thread)."""
+    write_cli_config(
+        webhook_url=WEBHOOK_URL,
+        space_id=SPACE_ID,
+        sessions_file=str(tmp_path / "sessions.json"),
+    )
+    monkeypatch.setattr(
+        "claude_google_chat.chat.send_webhook",
+        lambda config, msg, thread_key=None: None,
+    )
+    result = runner.invoke(cli.app, ["connect", "alpha"])
+    assert result.exit_code != 0
+    assert isinstance(result.exception, RuntimeError)
+
+
+def test_connect_invalid_name_exits_code_2(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An invalid explicit NAME surfaces a clean non-zero exit (no traceback)."""
+    write_cli_config(
+        webhook_url=WEBHOOK_URL,
+        space_id=SPACE_ID,
+        sessions_file=str(tmp_path / "sessions.json"),
+    )
+    monkeypatch.setattr(
+        "claude_google_chat.chat.send_webhook",
+        lambda config, msg, thread_key=None: f"{SPACE_ID}/threads/{thread_key}",
+    )
+    result = runner.invoke(cli.app, ["connect", "Bad Name"])
+    assert result.exit_code == 2
+    assert "Bad Name" in result.stderr
+
+
+def test_session_list_shows_sessions(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions_file = tmp_path / "sessions.json"
+    write_cli_config(webhook_url=WEBHOOK_URL, space_id=SPACE_ID, sessions_file=str(sessions_file))
+    monkeypatch.setattr(
+        "claude_google_chat.chat.send_webhook",
+        lambda config, msg, thread_key=None: f"{SPACE_ID}/threads/{thread_key}",
+    )
+    runner.invoke(cli.app, ["connect", "alpha"])
+
+    result = runner.invoke(cli.app, ["session", "list"])
+    assert result.exit_code == 0
+    assert "alpha" in result.stdout
+    assert "[dispatcher]" in result.stdout
+
+
+def test_session_list_empty(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    write_cli_config(space_id=SPACE_ID, sessions_file=str(tmp_path / "sessions.json"))
+    result = runner.invoke(cli.app, ["session", "list"])
+    assert result.exit_code == 0
+    assert "no sessions" in result.stdout
+
+
+def test_disconnect_removes_session(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions_file = tmp_path / "sessions.json"
+    write_cli_config(webhook_url=WEBHOOK_URL, space_id=SPACE_ID, sessions_file=str(sessions_file))
+    monkeypatch.setattr(
+        "claude_google_chat.chat.send_webhook",
+        lambda config, msg, thread_key=None: f"{SPACE_ID}/threads/{thread_key}",
+    )
+    runner.invoke(cli.app, ["connect", "alpha"])
+
+    result = runner.invoke(cli.app, ["disconnect", "alpha"])
+    assert result.exit_code == 0
+    assert "disconnected alpha" in result.stdout
+
+    from claude_google_chat.sessions import FileSessionRegistry
+
+    assert "alpha" not in FileSessionRegistry(sessions_file).load()
+
+
+def test_disconnect_unknown_fails_fast(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    tmp_path: Path,
+) -> None:
+    write_cli_config(space_id=SPACE_ID, sessions_file=str(tmp_path / "sessions.json"))
+    result = runner.invoke(cli.app, ["disconnect", "ghost"])
+    assert result.exit_code == 2
+    assert "ghost" in result.stderr
+
+
+def test_listen_session_forwarded_to_run(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`cgc listen --session NAME` forwards the session to listener.run."""
+    write_cli_config(space_id=SPACE_ID, oauth_client_file="/tmp/client.json")
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr("claude_google_chat.listener.run", run)
+
+    result = runner.invoke(cli.app, ["listen", "--session", "alpha", "--once"])
+    assert result.exit_code == 0
+    assert run.call_args.kwargs["session"] == "alpha"
+
+
+# --------------------------------------------------------------------------- #
 # completion command.
 # --------------------------------------------------------------------------- #
 

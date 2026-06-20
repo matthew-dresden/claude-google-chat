@@ -53,6 +53,7 @@ ENV_OVERRIDES: dict[str, str] = {
     "state_file": "CGC_STATE_FILE",
     "require_trigger": "CGC_REQUIRE_TRIGGER",
     "threads": "CGC_THREADS",
+    "sessions_file": "CGC_SESSIONS_FILE",
 }
 
 _SECRET_KEYS: frozenset[str] = frozenset({"webhook_url", "token_file"})
@@ -80,6 +81,16 @@ def default_state_path() -> Path:
     re-reading recent history and re-emitting already-seen messages.
     """
     return config_dir() / "listen-state.json"
+
+
+def default_sessions_path() -> Path:
+    """Return the default durable session-registry path under the config dir.
+
+    Holds the local session map (name → space, claimed threads, dispatcher flag,
+    created_at) used by ``cgc connect``/``list``/``disconnect`` and routing-aware
+    ``cgc listen``. Written with owner-only (``0600``) permissions.
+    """
+    return config_dir() / "sessions.json"
 
 
 def _parse_bool(value: object) -> bool:
@@ -158,6 +169,7 @@ class Config:
     state_file: str | None = None
     require_trigger: bool = DEFAULT_REQUIRE_TRIGGER
     threads: tuple[str, ...] = ()
+    sessions_file: str | None = None
 
     @classmethod
     def load(
@@ -202,6 +214,11 @@ class Config:
         )
         state_file = (
             str(merged["state_file"]) if "state_file" in merged else str(default_state_path())
+        )
+        sessions_file = (
+            str(merged["sessions_file"])
+            if "sessions_file" in merged
+            else str(default_sessions_path())
         )
         config = cls(
             webhook_url=_opt_str("webhook_url"),
@@ -248,6 +265,7 @@ class Config:
                 else DEFAULT_REQUIRE_TRIGGER
             ),
             threads=(_parse_threads(merged["threads"]) if "threads" in merged else ()),
+            sessions_file=sessions_file,
         )
         config.require_keys(require)
         return config
