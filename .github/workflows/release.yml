@@ -1,8 +1,25 @@
 name: Release
 
+# Mirrors kanon's "validate-on-merge + automated tag release" mechanism, adapted
+# to a uv + hatchling project. On every push to main this workflow re-validates
+# (build + artifact check), then derives the release version from the single
+# source of truth (pyproject.toml [project.version], kept in sync with
+# src/claude_google_chat/__init__.py) and cuts an annotated git tag `v<version>`
+# plus a GitHub Release carrying the built artifacts.
+#
+# This is idempotent: if the tag for the current version already exists it skips
+# cleanly and cuts no new release. (Current version 0.1.0 / tag v0.1.0 already
+# exists, so this workflow will NOT create a new release until the version is
+# bumped in pyproject.toml + __init__.py via a Conventional-Commit-style bump.)
+
 on:
   push:
     branches: [main]
+
+# Serialize releases; never cancel an in-flight release run.
+concurrency:
+  group: release-pipeline
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -19,11 +36,35 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Build distribution
+      - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          make build
+          make install
+
+      - name: Verify version consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import re
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          toml_version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          init_text = Path("src/claude_google_chat/__init__.py").read_text()
+          match = re.search(r'__version__\s*=\s*["\'](.*?)["\']', init_text)
+          if match is None:
+              sys.exit("__version__ not found in src/claude_google_chat/__init__.py")
+          init_version = match.group(1)
+          if toml_version != init_version:
+              sys.exit(
+                  f"Version mismatch: pyproject.toml ({toml_version}) "
+                  f"!= __init__.py ({init_version})"
+              )
+          print(f"Version consistency verified: {toml_version}")
+          PY
 
       - name: Read version
         id: version
@@ -40,14 +81,22 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.version.outputs.TAG }}"
+          git fetch --tags --force
           if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "Tag $TAG already exists, skipping release."
+            echo "Tag $TAG already exists, skipping release (idempotent no-op)."
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create release
+      - name: Build and check distribution
+        if: steps.tag_check.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          make distcheck
+
+      - name: Create tag and GitHub Release
         if: steps.tag_check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,6 +104,8 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.version.outputs.TAG }}"
-          git tag "$TAG"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
           gh release create "$TAG" dist/* --title "$TAG" --notes-from-tag

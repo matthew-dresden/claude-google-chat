@@ -1,0 +1,150 @@
+name: Publish to PyPI
+
+# ---------------------------------------------------------------------------
+# PyPI publish (mirrors kanon's method, adapted to uv + hatchling).
+#
+# SAFETY: This workflow only runs on RELEASE / TAG events (and manual dispatch).
+# It is NOT part of the pull-request / push-to-main merge-validation path, so it
+# can never block or break merge CI while PyPI publishing is still unconfigured.
+# Until you complete ONE of the setup options below, the only consequence of an
+# unconfigured state is that the "Publish to PyPI" step fails AFTER a release is
+# already cut — merge CI and releases stay green.
+#
+# SETUP (do exactly ONE of these LATER, before relying on automated publish):
+#
+#   Option A (RECOMMENDED) — PyPI Trusted Publisher via OIDC (no stored secret):
+#     1. Sign in at https://pypi.org and register/own the project
+#        "claude-google-chat" (or publish 0.1.0 once manually with
+#        `make publish` to create it).
+#     2. Project -> Settings -> Publishing -> "Add a new pending publisher" with:
+#          Publisher:          GitHub
+#          Owner:              matthew-dresden
+#          Repository name:    claude-google-chat
+#          Workflow filename:  publish.yml
+#          Environment name:   pypi
+#     3. In GitHub: Settings -> Environments -> create an environment named
+#        "pypi" (optionally add required reviewers for a human gate).
+#     With Option A, leave the publish step's `with:` WITHOUT a password — OIDC
+#     trusted publishing authenticates automatically. (This is the default below.)
+#
+#   Option B — API token (fallback, stored secret):
+#     1. Create a PyPI API token scoped to the "claude-google-chat" project.
+#     2. In GitHub: Settings -> Environments -> "pypi" -> add a secret
+#        PYPI_API_TOKEN with that token's value.
+#     3. Uncomment the `password:` line in the "Publish to PyPI" step below.
+#
+# Trigger: a published GitHub Release (created by release.yml), OR a manual
+# workflow_dispatch with a `tag` input (semver, e.g. 0.1.0).
+# ---------------------------------------------------------------------------
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g., 0.1.0 or v0.1.0)"
+        required: true
+        type: string
+
+concurrency:
+  group: publish-pipeline
+  cancel-in-progress: false
+
+jobs:
+  validate-version:
+    name: Validate version format
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve and validate tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ github.event.inputs.tag }}"
+          else
+            RAW="${{ github.event.release.tag_name }}"
+          fi
+          # Accept an optional leading "v"; the package version is the bare semver.
+          VERSION="${RAW#v}"
+          if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $RAW. Expected MAJOR.MINOR.PATCH (optionally v-prefixed)."
+            exit 1
+          fi
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Validated version: $VERSION (tag v$VERSION)"
+
+  build-and-publish:
+    name: Build and publish to PyPI
+    needs: validate-version
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/claude-google-chat
+    permissions:
+      id-token: write   # required for OIDC trusted publishing (Option A)
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate-version.outputs.tag }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          make install
+
+      - name: Verify version consistency
+        shell: bash
+        env:
+          TAG_VERSION: ${{ needs.validate-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import os
+          import re
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          tag_version = os.environ["TAG_VERSION"]
+          toml_version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          init_text = Path("src/claude_google_chat/__init__.py").read_text()
+          match = re.search(r'__version__\s*=\s*["\'](.*?)["\']', init_text)
+          if match is None:
+              sys.exit("__version__ not found in src/claude_google_chat/__init__.py")
+          init_version = match.group(1)
+
+          if tag_version != toml_version:
+              sys.exit(f"Version mismatch: tag ({tag_version}) != pyproject.toml ({toml_version})")
+          if tag_version != init_version:
+              sys.exit(f"Version mismatch: tag ({tag_version}) != __init__.py ({init_version})")
+          print(f"Version consistency verified: {tag_version}")
+          PY
+
+      - name: Build and check distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          make distcheck
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          attestations: false
+          verbose: true
+          # Option B (API-token fallback): uncomment the next line and add the
+          # PYPI_API_TOKEN secret to the "pypi" environment. Leave commented to
+          # use Option A (OIDC trusted publishing, no stored secret).
+          # password: ${{ secrets.PYPI_API_TOKEN }}

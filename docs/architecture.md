@@ -95,3 +95,28 @@ The protocol is defined once in `messages.py` and documented for Claude in the `
 - **No `sleep`-based readiness:** the listener uses an env-driven poll cadence and an idle timeout, never a fixed sleep as a synchronization primitive.
 - **Secrets stay secret:** never logged or echoed; the cached token is written with restrictive permissions; config lives outside the repo.
 - **12-factor:** stateless processes, config from the environment, logs to stdout.
+
+---
+
+## Build, release, and publish pipeline
+
+The project builds once (hatchling, driven by `uv`) and ships that single artifact everywhere — no environment-specific builds. Three GitHub Actions workflows separate **validation**, **release**, and **publish** into distinct stages:
+
+```mermaid
+flowchart LR
+    PR[Pull request] --> CI[ci.yml<br/>lint · format · types · version-check · tests · uv build]
+    PUSH[Push to main] --> CI
+    PUSH --> REL[release.yml<br/>re-validate · read version · tag exists?]
+    REL -->|tag v&lt;version&gt; missing| CUT[Build + twine check<br/>annotated git tag v&lt;version&gt;<br/>GitHub Release with dist/*]
+    REL -->|tag exists| NOOP[No-op idempotent skip]
+    CUT --> GHREL[(GitHub Release published)]
+    GHREL --> PUB[publish.yml<br/>environment: pypi · OIDC]
+    DISPATCH[Manual workflow_dispatch tag] --> PUB
+    PUB --> PYPI[(PyPI: claude-google-chat)]
+```
+
+- **`ci.yml` (merge validation):** runs on every pull request and push to `main` across Python 3.11/3.12. Steps: `make install`, `make lint`, `make format-check`, `make typecheck`, a **version-consistency** check (`pyproject.toml [project.version]` must equal `src/claude_google_chat/__init__.py:__version__`), JSON manifest validation, `make test`, `make build`. It never touches PyPI.
+- **`release.yml` (validate-on-merge + automated tag release):** on push to `main` it re-validates, reads the version from `pyproject.toml` (single source of truth), and **only if the `v<version>` tag does not already exist** builds + `twine check`s artifacts (`make distcheck`), cuts an **annotated** tag `v<version>`, and creates a **GitHub Release** carrying `dist/*`. Idempotent: an existing tag is a clean no-op (no empty release). Version is bumped manually in `pyproject.toml` + `__init__.py`; the tag is derived from that version, mirroring kanon's "pyproject version drives the tag" mechanism (without requiring semantic-release for this project).
+- **`publish.yml` (PyPI publish):** triggers **only** on a published GitHub Release or manual `workflow_dispatch`, never on pull-request / push-to-main events, so an unconfigured PyPI setup can never block or break merge CI. It validates the tag is semver, re-checks version consistency against the tag, `make distcheck`s, and publishes with `pypa/gh-action-pypi-publish@release/v1` from a GitHub Environment named **`pypi`**, using **OIDC Trusted Publishing** by default (no stored secret; `id-token: write`). An API-token fallback is available behind a commented `password:` line. Setup steps live in [installation.md](installation.md).
+
+The `Makefile` is the single entry point for these stages so local and CI behavior match: `install`, `lint`, `format-check`, `typecheck`, `test`, `build` (`uv build`), `distcheck` (`build` + `uvx twine check dist/*`), and `publish` (`distcheck` + `uv publish`, token from `UV_PUBLISH_TOKEN`, never hardcoded) for validated manual publishing.
