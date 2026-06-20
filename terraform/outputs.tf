@@ -18,7 +18,6 @@ locals {
     project_id            = var.project_id
     service_account_email = google_service_account.chat_app.email
     pubsub_topic          = local.pubsub_topic_id
-    pubsub_subscription   = local.pubsub_subscription_id
     space_id              = var.space_id
     trigger_prefix        = var.trigger_prefix
     poll_interval         = var.poll_interval

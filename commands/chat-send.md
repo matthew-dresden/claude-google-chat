@@ -21,8 +21,9 @@ text, then run:
 cgc chat send --status "$0" --text "<remaining text after the status token>"
 ```
 
-Surface the HTTP result to the user. On a non-2xx response, report the status code
-and the redacted webhook URL and **stop** — do not retry silently or fall back.
+On success the command prints `sent` and exits `0`. On a non-2xx response it exits
+non-zero with the status code and the redacted webhook URL — report that and
+**stop**; do not retry silently or fall back.
 
 ## Structured format
 
