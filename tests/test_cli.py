@@ -743,7 +743,7 @@ def test_completion_install_appends_to_rc(
     assert "completion installed" in result.stdout
     rc = tmp_path / ".zshrc"
     assert rc.exists()
-    assert "_CGC_COMPLETE=complete_zsh" in rc.read_text(encoding="utf-8")
+    assert "_CGC_COMPLETE=source_zsh" in rc.read_text(encoding="utf-8")
 
 
 def test_completion_undetectable_shell_exits_code_2(

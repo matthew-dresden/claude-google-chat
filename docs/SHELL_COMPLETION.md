@@ -76,13 +76,15 @@ This writes an **idempotent** block to `~/.bashrc`:
 
 ```bash
 # cgc shell completion
-eval "$(env _CGC_COMPLETE=complete_bash cgc)"
+eval "$(env _CGC_COMPLETE=source_bash cgc)"
 ```
+
+The instruction is `source_bash` (emit the completion-registration script), **not** `complete_bash` (perform a single completion). `complete_bash` reads `COMP_WORDS` from the environment — a variable the shell only sets while a `<TAB>` is in flight — so putting it in `~/.bashrc` would run the completion path with `COMP_WORDS` unset at every shell start-up and print a traceback. `source_bash` has no such dependency.
 
 Re-running `cgc completion bash --install` is a no-op when the exact line is already present, so it is safe in provisioning scripts. To wire it up by hand instead, add the same `eval` line yourself, or pipe the printed script:
 
 ```bash
-echo 'eval "$(env _CGC_COMPLETE=complete_bash cgc)"' >> ~/.bashrc
+echo 'eval "$(env _CGC_COMPLETE=source_bash cgc)"' >> ~/.bashrc
 ```
 
 Open a new shell (or `source ~/.bashrc`) and completion is active. Because the `eval` runs the live source, **upgrading `cgc` needs no extra step**.
@@ -124,14 +126,16 @@ This appends an idempotent block to `~/.zshrc`:
 
 ```zsh
 # cgc shell completion
-eval "$(env _CGC_COMPLETE=complete_zsh cgc)"
+eval "$(env _CGC_COMPLETE=source_zsh cgc)"
 ```
+
+The instruction is `source_zsh` (emit the registration script), **not** `complete_zsh`; as with bash, the `complete_*` form reads completion state from the environment and would print a traceback at shell start-up.
 
 Ensure `compinit` runs **before** that line (Oh My Zsh and most frameworks do this for you). A minimal manual setup:
 
 ```zsh
 autoload -U compinit && compinit
-eval "$(env _CGC_COMPLETE=complete_zsh cgc)"
+eval "$(env _CGC_COMPLETE=source_zsh cgc)"
 ```
 
 Open a new shell (or `source ~/.zshrc`). As with bash, the live `eval` means **no regeneration is needed after upgrades**.
