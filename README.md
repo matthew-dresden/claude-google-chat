@@ -159,6 +159,9 @@ The user config file lives in your OS config directory (resolved via `platformdi
 | **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
 | **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener/responder idle timeout, seconds (float); governs `listen` and `serve`. Optional · default `0` (run forever). |
 | **`send_envelope`**<br>`CGC_SEND_ENVELOPE` | Append the machine-readable JSON envelope to outbound Chat text. Optional · default `false` (clean human-facing summary only). |
+| **`max_consecutive_errors`**<br>`CGC_MAX_CONSECUTIVE_ERRORS` | Consecutive transient poll failures (`listen`/`serve`) tolerated before the loop fails fast with a non-zero exit. The counter resets on any successful poll (int). Optional · default `10`. |
+| **`state_file`**<br>`CGC_STATE_FILE` | Durable high-water state path for `listen`/`serve`. Records the last-processed message time so a restart resumes instead of re-emitting recent history (written `0600`). Optional · default `<config_dir>/listen-state.json`. |
+| **`require_trigger`**<br>`CGC_REQUIRE_TRIGGER` | When `true` (default), `listen` emits only messages starting with `trigger_prefix`. When `false`, `listen` surfaces **every** message from a HUMAN sender (bots/own posts always excluded) — trigger-prefixed lines still parse as commands; plain lines are surfaced as a message carrying the full text. Boolean. Optional · default `true`. |
 
 Secrets are never echoed: `cgc config show` masks the webhook token and token-file contents. See [docs/configuration.md](docs/configuration.md) for details.
 

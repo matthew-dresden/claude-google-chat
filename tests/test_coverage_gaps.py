@@ -3,7 +3,7 @@
 Each test here exercises a specific previously-uncovered line or branch:
 
 - ``chat._build_service`` / ``chat.build_app_service`` (lazy ``build`` wiring).
-- ``serve._message_sender_email`` / ``serve._is_app_message`` non-dict senders.
+- ``rawmessage.sender_email`` / ``rawmessage.is_human_message`` non-dict senders.
 - ``serve.run`` idle-timeout → non-zero exit path.
 - ``bootstrap.normalize_pubsub_topic`` final-regex rejection.
 - ``bootstrap._build_events_service`` (lazy ``build`` wiring).
@@ -39,11 +39,8 @@ from claude_google_chat.bootstrap import (
     normalize_pubsub_topic,
 )
 from claude_google_chat.config import Config, _toml_value, default_config_path
-from claude_google_chat.serve import (
-    ServeTimeout,
-    _is_app_message,
-    _message_sender_email,
-)
+from claude_google_chat.rawmessage import is_human_message, sender_email
+from claude_google_chat.serve import ServeTimeout
 
 
 def _http_error(status: int, message: str) -> HttpError:
@@ -130,23 +127,23 @@ def test_build_app_service_wires_service_account_credentials(
 
 
 # --------------------------------------------------------------------------- #
-# serve helpers — non-dict / missing sender branches.
+# raw-message accessors — non-dict / missing sender branches.
 # --------------------------------------------------------------------------- #
 
 
-def test_message_sender_email_returns_none_for_non_dict_sender() -> None:
+def test_sender_email_returns_none_for_non_dict_sender() -> None:
     """A non-dict ``sender`` yields no extractable email."""
-    assert _message_sender_email({"sender": "not-a-dict"}) is None
+    assert sender_email({"sender": "not-a-dict"}) is None
 
 
-def test_message_sender_email_returns_none_for_missing_email() -> None:
+def test_sender_email_returns_none_for_missing_email() -> None:
     """A dict ``sender`` without an ``email`` key yields None."""
-    assert _message_sender_email({"sender": {"type": "HUMAN"}}) is None
+    assert sender_email({"sender": {"type": "HUMAN"}}) is None
 
 
-def test_is_app_message_returns_false_for_non_dict_sender() -> None:
-    """A non-dict ``sender`` is not classified as a bot/app message."""
-    assert _is_app_message({"sender": None}) is False
+def test_is_human_message_returns_false_for_non_dict_sender() -> None:
+    """A non-dict ``sender`` is not classified as a human message."""
+    assert is_human_message({"sender": None}) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -157,12 +154,13 @@ def test_is_app_message_returns_false_for_non_dict_sender() -> None:
 def test_run_returns_nonzero_on_idle_timeout(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Any,
 ) -> None:
     """``serve.run`` returns 1 and writes the timeout message to stderr."""
-    config = _config(listen_timeout=5, poll_interval=0)
+    config = _config(listen_timeout=5, poll_interval=0, state_file=str(tmp_path / "state.json"))
 
     class _ImmediateTimeoutResponder:
-        def __init__(self, cfg: Config) -> None:
+        def __init__(self, cfg: Config, **kwargs: Any) -> None:
             self._cfg = cfg
 
         def run(self, *, once: bool = False) -> list[Any]:
@@ -179,12 +177,13 @@ def test_run_returns_nonzero_on_idle_timeout(
 
 def test_run_returns_zero_on_clean_once_drain(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
 ) -> None:
     """A clean ``--once`` drain returns exit code 0 (no timeout raised)."""
-    config = _config(listen_timeout=5, poll_interval=0)
+    config = _config(listen_timeout=5, poll_interval=0, state_file=str(tmp_path / "state.json"))
 
     class _NoopResponder:
-        def __init__(self, cfg: Config) -> None:
+        def __init__(self, cfg: Config, **kwargs: Any) -> None:
             self._cfg = cfg
 
         def run(self, *, once: bool = False) -> list[Any]:

@@ -26,6 +26,10 @@ DEFAULT_LISTEN_TIMEOUT = 0.0  # 0 == run forever
 DEFAULT_WEBHOOK_TIMEOUT = 30.0  # seconds; outbound webhook HTTP timeout
 DEFAULT_PAGE_SIZE = 100  # Chat API messages.list page size
 DEFAULT_SEND_ENVELOPE = False  # opt-in: append the JSON envelope to outbound Chat text
+# Consecutive transient poll failures tolerated before the loop fails fast. A
+# truly-down backend still surfaces (non-zero exit) once this bound is reached.
+DEFAULT_MAX_CONSECUTIVE_ERRORS = 10
+DEFAULT_REQUIRE_TRIGGER = True  # default: only emit trigger-prefixed messages
 
 # Accepted string spellings when coercing a boolean config value (TOML booleans
 # arrive already typed; env-var / string values are matched case-insensitively).
@@ -45,6 +49,9 @@ ENV_OVERRIDES: dict[str, str] = {
     "webhook_timeout": "CGC_WEBHOOK_TIMEOUT",
     "page_size": "CGC_PAGE_SIZE",
     "send_envelope": "CGC_SEND_ENVELOPE",
+    "max_consecutive_errors": "CGC_MAX_CONSECUTIVE_ERRORS",
+    "state_file": "CGC_STATE_FILE",
+    "require_trigger": "CGC_REQUIRE_TRIGGER",
     # Service-account (app) auth + Workspace Events bootstrap.
     "service_account_file": "CGC_SERVICE_ACCOUNT_FILE",
     "project_id": "CGC_PROJECT_ID",
@@ -69,6 +76,15 @@ def default_config_path() -> Path:
 def default_token_path() -> Path:
     """Return the default cached OAuth token path under the config dir."""
     return config_dir() / "token.json"
+
+
+def default_state_path() -> Path:
+    """Return the default durable listener-state path under the config dir.
+
+    Holds the last-processed high-water marker so a restart resumes instead of
+    re-reading recent history and re-emitting already-seen messages.
+    """
+    return config_dir() / "listen-state.json"
 
 
 def _parse_bool(value: object) -> bool:
@@ -118,6 +134,9 @@ class Config:
     webhook_timeout: float = DEFAULT_WEBHOOK_TIMEOUT
     page_size: int = DEFAULT_PAGE_SIZE
     send_envelope: bool = DEFAULT_SEND_ENVELOPE
+    max_consecutive_errors: int = DEFAULT_MAX_CONSECUTIVE_ERRORS
+    state_file: str | None = None
+    require_trigger: bool = DEFAULT_REQUIRE_TRIGGER
     service_account_file: str | None = None
     project_id: str | None = None
     pubsub_topic: str | None = None
@@ -165,6 +184,9 @@ class Config:
         token_file = (
             str(merged["token_file"]) if "token_file" in merged else str(default_token_path())
         )
+        state_file = (
+            str(merged["state_file"]) if "state_file" in merged else str(default_state_path())
+        )
         config = cls(
             webhook_url=_opt_str("webhook_url"),
             space_id=_opt_str("space_id"),
@@ -197,6 +219,17 @@ class Config:
                 _parse_bool(merged["send_envelope"])
                 if "send_envelope" in merged
                 else DEFAULT_SEND_ENVELOPE
+            ),
+            max_consecutive_errors=(
+                int(str(merged["max_consecutive_errors"]))
+                if "max_consecutive_errors" in merged
+                else DEFAULT_MAX_CONSECUTIVE_ERRORS
+            ),
+            state_file=state_file,
+            require_trigger=(
+                _parse_bool(merged["require_trigger"])
+                if "require_trigger" in merged
+                else DEFAULT_REQUIRE_TRIGGER
             ),
             service_account_file=_opt_str("service_account_file"),
             project_id=_opt_str("project_id"),

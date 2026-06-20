@@ -25,7 +25,13 @@ from claude_google_chat.messages import DEFAULT_TRIGGER_PREFIX, ChatMessage
 
 
 def _config(**overrides: Any) -> Config:
-    """Build a listener Config; values are input-driven via overrides."""
+    """Build a listener Config; values are input-driven via overrides.
+
+    ``state_file`` resolves to a path under ``/tmp`` only when a test drives the
+    real ``run`` entrypoint (which builds a file-backed store); pass an explicit
+    ``state_file`` (e.g. under ``tmp_path``) for those tests so no real config
+    directory is touched.
+    """
     base: dict[str, Any] = {
         "space_id": "spaces/AAAA",
         "trigger_prefix": DEFAULT_TRIGGER_PREFIX,
@@ -226,6 +232,7 @@ def test_run_once_emits_one_json_line_per_message(
     monkeypatch: pytest.MonkeyPatch,
     make_raw_message: Any,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Any,
 ) -> None:
     """``run(once=True)`` writes one JSON line per yielded message and exits 0."""
     msg = make_raw_message(
@@ -239,7 +246,7 @@ def test_run_once_emits_one_json_line_per_message(
         lambda config, since=None: [msg],
     )
 
-    exit_code = run(_config(), once=True)
+    exit_code = run(_config(state_file=str(tmp_path / "state.json")), once=True)
 
     assert exit_code == 0
     out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
@@ -251,10 +258,95 @@ def test_run_once_emits_one_json_line_per_message(
     assert record["command"] == "deploy"
 
 
+# --------------------------------------------------------------------------- #
+# Catch-all mode (require_trigger=False): surface every HUMAN message, exclude
+# bots/own posts. require_trigger=True path stays unchanged.
+# --------------------------------------------------------------------------- #
+
+
+def test_catch_all_surfaces_non_prefixed_human_message(
+    frozen_clock: str,
+    human_plain_message: dict[str, Any],
+) -> None:
+    """With require_trigger=False a plain HUMAN line is surfaced (not skipped)."""
+    fetch, _ = _scripted_fetcher([[human_plain_message]])
+    listener = Listener(_config(require_trigger=False), fetcher=fetch)
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert len(emitted) == 1
+    only = emitted[0]
+    assert isinstance(only, ChatMessage)
+    # The full message text is carried on the surfaced message.
+    assert only.text == "just chatting, no command here"
+    assert only.command == "just"
+
+
+def test_catch_all_still_parses_trigger_prefixed_human_message_as_command(
+    frozen_clock: str,
+    human_trigger_message: dict[str, Any],
+) -> None:
+    """A trigger-prefixed HUMAN line still parses as a structured command."""
+    fetch, _ = _scripted_fetcher([[human_trigger_message]])
+    listener = Listener(_config(require_trigger=False), fetcher=fetch)
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert len(emitted) == 1
+    assert emitted[0].command == "deploy"
+    assert emitted[0].args == ["prod"]
+
+
+def test_catch_all_excludes_bot_and_own_messages(
+    frozen_clock: str,
+    bot_trigger_message: dict[str, Any],
+) -> None:
+    """A BOT/app message is never surfaced even in catch-all mode (loop guard)."""
+    fetch, _ = _scripted_fetcher([[bot_trigger_message]])
+    listener = Listener(_config(require_trigger=False), fetcher=fetch)
+
+    assert list(listener.iter_new_messages(once=True)) == []
+
+
+def test_catch_all_mixed_batch_emits_only_human_messages(
+    frozen_clock: str,
+    human_plain_message: dict[str, Any],
+    human_trigger_message: dict[str, Any],
+    bot_trigger_message: dict[str, Any],
+) -> None:
+    """A mixed batch surfaces both human messages and drops the bot message."""
+    fetch, _ = _scripted_fetcher(
+        [[human_plain_message, human_trigger_message, bot_trigger_message]]
+    )
+    listener = Listener(_config(require_trigger=False), fetcher=fetch)
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert len(emitted) == 2
+    commands = {m.command for m in emitted}
+    assert commands == {"just", "deploy"}
+
+
+def test_require_trigger_true_path_unchanged(
+    frozen_clock: str,
+    human_plain_message: dict[str, Any],
+    human_trigger_message: dict[str, Any],
+) -> None:
+    """The default (require_trigger=True) still emits only trigger-prefixed lines."""
+    fetch, _ = _scripted_fetcher([[human_plain_message, human_trigger_message]])
+    listener = Listener(_config(require_trigger=True), fetcher=fetch)
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert len(emitted) == 1
+    assert emitted[0].command == "deploy"
+
+
 def test_run_returns_nonzero_on_idle_timeout(
     frozen_clock: str,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    tmp_path: Any,
 ) -> None:
     """``run`` surfaces the idle timeout as a non-zero exit and stderr message."""
     monkeypatch.setattr(
@@ -271,7 +363,14 @@ def test_run_returns_nonzero_on_idle_timeout(
         lambda seconds: None,
     )
 
-    exit_code = run(_config(listen_timeout=10.0, poll_interval=1.0), once=False)
+    exit_code = run(
+        _config(
+            listen_timeout=10.0,
+            poll_interval=1.0,
+            state_file=str(tmp_path / "state.json"),
+        ),
+        once=False,
+    )
 
     assert exit_code == 1
     err = capsys.readouterr().err

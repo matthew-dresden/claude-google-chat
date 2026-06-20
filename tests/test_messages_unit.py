@@ -32,8 +32,45 @@ from claude_google_chat.messages import (
     STATUS_EMOJI,
     ChatMessage,
     format_message,
+    message_from_human_text,
     parse_message,
+    to_jsonl,
 )
+
+# --------------------------------------------------------------------------- #
+# message_from_human_text: catch-all surfacing (never raises on plain text).
+# --------------------------------------------------------------------------- #
+
+
+def test_message_from_human_text_parses_trigger_line_as_command(frozen_clock: str) -> None:
+    msg = message_from_human_text(f"{DEFAULT_TRIGGER_PREFIX} deploy prod")
+    assert msg.kind == "command"
+    assert msg.command == "deploy"
+    assert msg.args == ["prod"]
+
+
+def test_message_from_human_text_surfaces_plain_line_without_raising(frozen_clock: str) -> None:
+    msg = message_from_human_text("just chatting here")
+    assert msg.kind == "command"
+    assert msg.command == "just"
+    assert msg.text == "just chatting here"
+    # A surfaced plain message must serialise to JSONL without raising.
+    assert "just chatting here" in to_jsonl(msg)
+
+
+def test_message_from_human_text_honours_custom_prefix(frozen_clock: str) -> None:
+    msg = message_from_human_text("bot: ship it", trigger_prefix="bot:")
+    assert msg.command == "ship"
+    assert msg.args == ["it"]
+
+
+def test_message_from_human_text_does_not_raise_on_non_envelope_text(frozen_clock: str) -> None:
+    """Unlike parse_message, the catch-all builder never fails fast on free text."""
+    with pytest.raises(ValueError):
+        parse_message("plain text with no prefix or envelope")
+    surfaced = message_from_human_text("plain text with no prefix or envelope")
+    assert surfaced.text == "plain text with no prefix or envelope"
+
 
 # --------------------------------------------------------------------------- #
 # Constants / invariants.

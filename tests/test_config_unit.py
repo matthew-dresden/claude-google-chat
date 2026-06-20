@@ -26,12 +26,15 @@ import pytest
 
 from claude_google_chat.config import (
     DEFAULT_LISTEN_TIMEOUT,
+    DEFAULT_MAX_CONSECUTIVE_ERRORS,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_REQUIRE_TRIGGER,
     DEFAULT_SEND_ENVELOPE,
     ENV_OVERRIDES,
     Config,
     _parse_bool,
     _redact,
+    default_state_path,
     default_token_path,
     merge_and_write_config,
     merge_config_values,
@@ -77,6 +80,56 @@ def test_token_file_explicit_value_wins(write_config_file: Callable[..., Path]) 
     path = write_config_file(token_file="/custom/token.json")
     config = Config.load(path=path, env={})
     assert config.token_file == "/custom/token.json"
+
+
+# --------------------------------------------------------------------------- #
+# load(): resilience + catch-all + state-file defaults and coercion.
+# --------------------------------------------------------------------------- #
+
+
+def test_resilience_and_catch_all_defaults_applied() -> None:
+    """The new tunables fall back to their documented defaults when unset."""
+    config = Config.load(path=Path("/nonexistent.toml"), env={})
+    assert config.max_consecutive_errors == DEFAULT_MAX_CONSECUTIVE_ERRORS
+    assert config.require_trigger is DEFAULT_REQUIRE_TRIGGER
+    assert config.require_trigger is True
+
+
+def test_state_file_defaults_to_config_dir_path(write_config_file: Callable[..., Path]) -> None:
+    """An unset ``state_file`` resolves to the default listen-state path."""
+    path = write_config_file(space_id="spaces/AAAA")
+    config = Config.load(path=path, env={})
+    assert config.state_file == str(default_state_path())
+
+
+def test_state_file_explicit_value_wins(write_config_file: Callable[..., Path]) -> None:
+    path = write_config_file(state_file="/custom/listen-state.json")
+    config = Config.load(path=path, env={})
+    assert config.state_file == "/custom/listen-state.json"
+
+
+def test_max_consecutive_errors_coerced_to_int_from_env() -> None:
+    config = Config.load(path=Path("/nonexistent.toml"), env={"CGC_MAX_CONSECUTIVE_ERRORS": "25"})
+    assert config.max_consecutive_errors == 25
+    assert isinstance(config.max_consecutive_errors, int)
+
+
+def test_max_consecutive_errors_invalid_env_fails_fast() -> None:
+    with pytest.raises(ValueError):
+        Config.load(
+            path=Path("/nonexistent.toml"), env={"CGC_MAX_CONSECUTIVE_ERRORS": "not-an-int"}
+        )
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "no", "off"])
+def test_require_trigger_falsey_env_parses_false(raw: str) -> None:
+    config = Config.load(path=Path("/nonexistent.toml"), env={"CGC_REQUIRE_TRIGGER": raw})
+    assert config.require_trigger is False
+
+
+def test_require_trigger_unparseable_env_fails_fast() -> None:
+    with pytest.raises(ValueError):
+        Config.load(path=Path("/nonexistent.toml"), env={"CGC_REQUIRE_TRIGGER": "maybe"})
 
 
 # --------------------------------------------------------------------------- #
@@ -223,6 +276,8 @@ def test_every_env_override_is_honoured() -> None:
         "webhook_timeout",
         "page_size",
         "send_envelope",
+        "max_consecutive_errors",
+        "require_trigger",
     }
     env = {var: f"value-for-{key}" for key, var in ENV_OVERRIDES.items() if key not in typed_fields}
     env["CGC_POLL_INTERVAL"] = "3.5"
@@ -230,6 +285,8 @@ def test_every_env_override_is_honoured() -> None:
     env["CGC_WEBHOOK_TIMEOUT"] = "45.0"
     env["CGC_PAGE_SIZE"] = "250"
     env["CGC_SEND_ENVELOPE"] = "true"
+    env["CGC_MAX_CONSECUTIVE_ERRORS"] = "7"
+    env["CGC_REQUIRE_TRIGGER"] = "false"
     config = Config.load(path=Path("/nonexistent.toml"), env=env)
     for key in ENV_OVERRIDES:
         if key in typed_fields:
@@ -241,6 +298,8 @@ def test_every_env_override_is_honoured() -> None:
     assert config.webhook_timeout == 45.0
     assert config.page_size == 250
     assert config.send_envelope is True
+    assert config.max_consecutive_errors == 7
+    assert config.require_trigger is False
 
 
 # --------------------------------------------------------------------------- #
