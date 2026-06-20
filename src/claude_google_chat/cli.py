@@ -1,27 +1,47 @@
 """Typer CLI for claude-google-chat (``cgc`` console script).
 
 Subcommands:
-    config init|show|set   manage the user config file
-    auth login             complete the OAuth installed-app flow
-    chat send              send a status ping via the webhook
-    bootstrap              service-account setup Terraform can't do (join/create
-                           space, create Workspace Events subscription, merge config)
-    serve                  always-listening responder (app auth)
-    listen                 run the inbound listener
-    clear                  delete trigger messages from the space
-    status                 show resolved configuration health
+    config init|show|get|set  manage the user config file
+    auth login                complete the OAuth installed-app flow
+    chat send                 send a status ping via the webhook
+    bootstrap                 service-account setup Terraform can't do (join/create
+                              space, create Workspace Events subscription, merge config)
+    serve                     always-listening responder (app auth)
+    listen                    run the inbound listener
+    clear                     delete trigger messages from the space
+    status                    show resolved configuration health
+    completion                print/install the shell-completion script
 
 All side-effecting failures fail fast with a non-zero exit code and a clear,
 non-secret message.
+
+Shell completion is available two ways: Typer's native ``--install-completion``
+/ ``--show-completion`` flags, and the friendlier ``cgc completion <shell>``
+command. Dynamic value completers (config keys, ``--status`` values, ``--shell``
+choices, file paths, and config-derived values) are wired from
+:mod:`claude_google_chat.completion`.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Annotated
 
 import typer
 
 from claude_google_chat import __version__
+from claude_google_chat.completion import (
+    SUPPORTED_COMPLETION_SHELLS,
+    complete_config_key,
+    complete_shell,
+    complete_space_id,
+    complete_status,
+    complete_trigger_prefix,
+    detect_shell,
+    install_completion_line,
+    render_completion_script,
+)
 from claude_google_chat.config import (
     Config,
     default_config_path,
@@ -29,14 +49,24 @@ from claude_google_chat.config import (
 )
 from claude_google_chat.messages import ChatMessage
 
+APP_EPILOG = (
+    "Enable tab completion with 'cgc completion bash --install' (or zsh/fish), "
+    "or Typer's native 'cgc --install-completion'. Configuration lives in the OS "
+    "config directory; run 'cgc setup' to see the path and required keys."
+)
+
 app = typer.Typer(
     name="cgc",
     help="Two-way Google Chat ChatOps integration for Claude Code.",
+    epilog=APP_EPILOG,
     no_args_is_help=True,
-    add_completion=False,
+    add_completion=True,
 )
 
-config_app = typer.Typer(help="Manage the user configuration file.", no_args_is_help=True)
+config_app = typer.Typer(
+    help="Manage the user configuration file (init/show/get/set).",
+    no_args_is_help=True,
+)
 auth_app = typer.Typer(help="Manage Google OAuth credentials.", no_args_is_help=True)
 chat_app = typer.Typer(help="Send messages to Google Chat.", no_args_is_help=True)
 app.add_typer(config_app, name="config")
@@ -60,7 +90,14 @@ def main(
         help="Show the version and exit.",
     ),
 ) -> None:
-    """Top-level entry point; handles the global ``--version`` flag."""
+    """Two-way Google Chat ChatOps integration for Claude Code.
+
+    Run a command group with ``--help`` (e.g. ``cgc config --help``) to see its
+    subcommands. Outbound status pings use an incoming webhook; inbound listening
+    uses OAuth or service-account credentials. All required configuration is
+    resolved from environment variables or the user config file, failing fast
+    with a clear message when a value is missing.
+    """
 
 
 @config_app.command("init")
@@ -81,9 +118,36 @@ def config_show() -> None:
     typer.echo(json.dumps(config.redacted(), indent=2, sort_keys=True))
 
 
+@config_app.command("get")
+def config_get(
+    key: str = typer.Argument(
+        ...,
+        help="Config key to read (secrets are masked).",
+        autocompletion=complete_config_key,
+    ),
+) -> None:
+    """Print one resolved config value, masking secrets.
+
+    Reads the same merged (file + environment) view as ``config show`` and
+    fails fast with a non-zero exit code if the key is unknown.
+    """
+    config = Config.load()
+    redacted = config.redacted()
+    if key not in redacted:
+        valid = ", ".join(sorted(redacted))
+        typer.echo(f"unknown config key {key!r}; valid keys: {valid}", err=True)
+        raise typer.Exit(code=2)
+    value = redacted[key]
+    typer.echo("" if value is None else str(value))
+
+
 @config_app.command("set")
 def config_set(
-    key: str = typer.Argument(..., help="Config key to set."),
+    key: str = typer.Argument(
+        ...,
+        help="Config key to set.",
+        autocompletion=complete_config_key,
+    ),
     value: str = typer.Argument(..., help="Value to store."),
 ) -> None:
     """Set a single config key, preserving existing keys."""
@@ -99,21 +163,50 @@ def config_set(
 
 
 @auth_app.command("login")
-def auth_login() -> None:
-    """Run the OAuth installed-app flow and cache the token."""
+def auth_login(
+    client_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--client-file",
+            help="OAuth client-secrets JSON file (overrides config oauth_client_file).",
+            exists=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+) -> None:
+    """Run the OAuth installed-app flow and cache the token.
+
+    Reads the OAuth client-secrets file from ``--client-file`` if given,
+    otherwise from the resolved ``oauth_client_file`` config value. Fails fast
+    when neither is available.
+    """
+    from dataclasses import replace
+
     from claude_google_chat.auth import login
 
-    config = Config.load(require=("oauth_client_file",))
+    if client_file is not None:
+        # Typer validated the path exists/is readable; override the config value.
+        config = replace(Config.load(), oauth_client_file=str(client_file))
+    else:
+        config = Config.load(require=("oauth_client_file",))
     login(config)
     typer.echo("OAuth token cached")
 
 
 @chat_app.command("send")
 def chat_send(
-    text: str = typer.Option(..., "--text", help="Message body."),
-    status: str = typer.Option("info", "--status", help="Status label."),
+    text: str = typer.Option(..., "--text", help="Message body (summary line)."),
+    status: str = typer.Option(
+        "info",
+        "--status",
+        help="Status label: info, working, success, error, or blocked.",
+        autocompletion=complete_status,
+    ),
     correlation_id: str | None = typer.Option(
-        None, "--correlation-id", help="Optional correlation id."
+        None,
+        "--correlation-id",
+        help="Optional id linking a result back to a command.",
     ),
 ) -> None:
     """Send a structured status ping via the incoming webhook."""
@@ -174,7 +267,13 @@ def bootstrap() -> None:
 def serve(
     once: bool = typer.Option(False, "--once", help="Handle pending owner messages once and exit."),
     timeout: float | None = typer.Option(
-        None, "--timeout", help="Idle timeout in seconds (overrides config)."
+        None, "--timeout", help="Idle timeout in seconds (overrides config listen_timeout)."
+    ),
+    space_id: str | None = typer.Option(
+        None,
+        "--space-id",
+        help="Chat space to serve, e.g. spaces/AAAA (overrides config space_id).",
+        autocompletion=complete_space_id,
     ),
 ) -> None:
     """Run the always-listening responder, replying to owner messages as the app.
@@ -187,9 +286,12 @@ def serve(
 
     from claude_google_chat.serve import run as run_serve
 
-    config = Config.load(require=("service_account_file", "space_id"))
+    config = Config.load()
+    if space_id is not None:
+        config = replace(config, space_id=space_id)
     if timeout is not None:
         config = replace(config, listen_timeout=timeout)
+    config.require_keys(("service_account_file", "space_id"))
     code = run_serve(config, once=once)
     raise typer.Exit(code=code)
 
@@ -198,7 +300,13 @@ def serve(
 def listen(
     once: bool = typer.Option(False, "--once", help="Drain pending messages and exit."),
     timeout: float | None = typer.Option(
-        None, "--timeout", help="Idle timeout in seconds (overrides config)."
+        None, "--timeout", help="Idle timeout in seconds (overrides config listen_timeout)."
+    ),
+    space_id: str | None = typer.Option(
+        None,
+        "--space-id",
+        help="Chat space to read, e.g. spaces/AAAA (overrides config space_id).",
+        autocompletion=complete_space_id,
     ),
 ) -> None:
     """Run the inbound listener, emitting one JSON line per new message."""
@@ -206,19 +314,33 @@ def listen(
 
     from claude_google_chat.listener import run
 
-    config = Config.load(require=("space_id", "oauth_client_file"))
+    config = Config.load()
+    if space_id is not None:
+        config = replace(config, space_id=space_id)
     if timeout is not None:
         config = replace(config, listen_timeout=timeout)
+    config.require_keys(("space_id", "oauth_client_file"))
     code = run(config, once=once)
     raise typer.Exit(code=code)
 
 
 @app.command("clear")
-def clear() -> None:
+def clear(
+    trigger_prefix: str | None = typer.Option(
+        None,
+        "--trigger-prefix",
+        help="Only delete messages starting with this prefix (overrides config).",
+        autocompletion=complete_trigger_prefix,
+    ),
+) -> None:
     """Delete trigger-prefixed messages from the configured space."""
+    from dataclasses import replace
+
     from claude_google_chat.chat import delete_message, list_messages
 
     config = Config.load(require=("space_id", "oauth_client_file"))
+    if trigger_prefix is not None:
+        config = replace(config, trigger_prefix=trigger_prefix)
     prefix = config.trigger_prefix
     deleted = 0
     for raw in list_messages(config):
@@ -240,6 +362,56 @@ def status() -> None:
     typer.echo(json.dumps(redacted, indent=2, sort_keys=True))
     typer.echo(f"send ready: {has_send}")
     typer.echo(f"read ready: {has_read}")
+
+
+@app.command("completion")
+def completion(
+    shell: str | None = typer.Argument(
+        None,
+        help="Target shell: bash, zsh, or fish. Defaults to the detected shell.",
+        autocompletion=complete_shell,
+    ),
+    install: bool = typer.Option(
+        False,
+        "--install",
+        help="Append the completion line to the shell's rc file instead of printing.",
+    ),
+) -> None:
+    """Print (or install) the tab-completion script for a shell.
+
+    Without ``--install`` the completion source is printed to stdout so you can
+    pipe it or add it yourself, e.g.::
+
+        cgc completion bash >> ~/.bashrc
+
+    With ``--install`` an idempotent line is appended to the shell's rc file
+    (``~/.bashrc``, ``~/.zshrc``, or ``~/.config/fish/config.fish``) that
+    evaluates the live completion source on shell start-up. Fails fast with a
+    clear message for an unsupported or undetectable shell.
+    """
+    resolved = shell or detect_shell()
+    if resolved is None:
+        supported = ", ".join(SUPPORTED_COMPLETION_SHELLS)
+        typer.echo(
+            f"could not detect the current shell; pass one explicitly (supported: {supported})",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    try:
+        if install:
+            rc_path = install_completion_line(app.info.name or "cgc", resolved)
+        else:
+            script = render_completion_script(app.info.name or "cgc", resolved)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+
+    if install:
+        typer.echo(f"{resolved} completion installed in {rc_path}")
+        typer.echo("Completion will take effect in new shells (or 'source' the rc file).")
+    else:
+        typer.echo(script)
 
 
 if __name__ == "__main__":
