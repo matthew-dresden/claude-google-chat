@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 Run the event-driven Google Chat listener, which reads new messages from the
 configured space and surfaces those prefixed with the configured trigger
-(`claude-command:` by default).
+(`claude:` by default).
 
 Arguments passed to this command: `$ARGUMENTS`.
 

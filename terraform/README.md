@@ -80,7 +80,7 @@ id into the rendered `config.toml`.
 | `region` | string | `us-central1` | no | Region for regional resources / provider default. |
 | `service_account_id` | string | `cgc-chat` | no | Account id (before `@`) for the Chat app identity SA. |
 | `enable_event_driven` | bool | `true` | no | Provision Pub/Sub topic + subscription + IAM for event delivery. |
-| `trigger_prefix` | string | `claude-command:` | no | Inbound command trigger prefix (rendered into config). |
+| `trigger_prefix` | string | `claude:` | no | Inbound command trigger prefix (rendered into config). |
 | `poll_interval` | number | `2.0` | no | Listener poll cadence (seconds). |
 | `listen_timeout` | number | `0` | no | Listener idle timeout (seconds); `0` = run forever. |
 | `config_output_path` | string | `~/.config/claude-google-chat/config.toml` | no | Where the rendered `config.toml` is written (leading `~` expanded). |

@@ -86,10 +86,11 @@ This keeps a single source of truth for behavior and avoids duplicating logic be
 
 The protocol is defined once in `messages.py` and documented for Claude in the `google-chat` skill. The envelope (`version`, `kind`, `status`, `text`, `command`, `args`, `ts`, `correlation_id`) is used in both directions:
 
-- Outbound `status`/`result` messages are formatted with a human summary line plus a fenced JSON envelope.
-- Inbound `command` messages are recognized when the text starts with the configured trigger prefix.
+- Outbound `status`/`result` messages are formatted by `format_message`. The first line is always the human summary (emoji + text). The fenced JSON envelope is appended only when `include_envelope=True`; `chat.send_webhook` and `chat.post_message_as_app` pass `include_envelope=config.send_envelope`, which defaults to `false` — so the **human-facing Chat view is the clean summary line by default**, and the envelope is opt-in (config `send_envelope` / `CGC_SEND_ENVELOPE`, or `cgc chat send --envelope`).
+- The **machine-readable channel** is the JSONL written to stdout by `cgc listen` / `cgc serve` (`to_jsonl`, one envelope per line) — independent of `send_envelope`, which only affects the Chat text.
+- Inbound `command` messages are recognized when the text starts with the configured trigger prefix (default `claude:`).
 
-`parse_message` and `format_message` round-trip for `status`/`result` kinds. Validation is strict and fails fast on an unknown `version`, `kind`, or `status`. See [usage.md](usage.md) for concrete examples and [configuration.md](configuration.md) for the trigger prefix and cadence settings.
+`parse_message` accepts both a trigger-prefixed line and a fenced/bare JSON envelope, and round-trips with the enveloped form of `format_message` for `status`/`result` kinds. Validation is strict and fails fast on an unknown `version`, `kind`, or `status`. See [usage.md](usage.md) for concrete examples and [configuration.md](configuration.md) for the trigger prefix, `send_envelope`, and cadence settings.
 
 ---
 

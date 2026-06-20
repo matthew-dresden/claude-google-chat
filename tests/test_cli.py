@@ -238,6 +238,54 @@ def test_chat_send_forwards_correlation_id(
     assert msg.status == "info"  # default
 
 
+def test_chat_send_defaults_to_config_send_envelope(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no flag the resolved config's send_envelope (default False) is used."""
+    write_cli_config(webhook_url=WEBHOOK_URL)
+    sent = MagicMock()
+    monkeypatch.setattr("claude_google_chat.chat.send_webhook", sent)
+
+    result = runner.invoke(cli.app, ["chat", "send", "--text", "hi"])
+    assert result.exit_code == 0
+    config_arg, _msg = sent.call_args.args
+    assert config_arg.send_envelope is False
+
+
+def test_chat_send_envelope_flag_overrides_config_true(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--envelope`` forces the envelope on even when config has it off."""
+    write_cli_config(webhook_url=WEBHOOK_URL, send_envelope=False)
+    sent = MagicMock()
+    monkeypatch.setattr("claude_google_chat.chat.send_webhook", sent)
+
+    result = runner.invoke(cli.app, ["chat", "send", "--text", "hi", "--envelope"])
+    assert result.exit_code == 0
+    config_arg, _msg = sent.call_args.args
+    assert config_arg.send_envelope is True
+
+
+def test_chat_send_no_envelope_flag_overrides_config_false(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--no-envelope`` forces the envelope off even when config has it on."""
+    write_cli_config(webhook_url=WEBHOOK_URL, send_envelope=True)
+    sent = MagicMock()
+    monkeypatch.setattr("claude_google_chat.chat.send_webhook", sent)
+
+    result = runner.invoke(cli.app, ["chat", "send", "--text", "hi", "--no-envelope"])
+    assert result.exit_code == 0
+    config_arg, _msg = sent.call_args.args
+    assert config_arg.send_envelope is False
+
+
 def test_chat_send_missing_text_option_exits_nonzero(
     runner: CliRunner,
     write_cli_config: Callable[..., Path],

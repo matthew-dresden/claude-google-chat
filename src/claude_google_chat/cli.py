@@ -232,11 +232,22 @@ def chat_send(
         "--correlation-id",
         help="Optional id linking a result back to a command.",
     ),
+    envelope: bool | None = typer.Option(
+        None,
+        "--envelope/--no-envelope",
+        help=(
+            "Append the machine-readable JSON envelope to the Chat text "
+            "(--envelope) or send only the clean summary line (--no-envelope). "
+            "Defaults to the resolved 'send_envelope' config value."
+        ),
+    ),
 ) -> None:
     """Send a structured status ping via the incoming webhook."""
     from claude_google_chat.chat import send_webhook
 
     config = Config.load(require=("webhook_url",))
+    if envelope is not None:
+        config = replace(config, send_envelope=envelope)
     msg = ChatMessage(
         kind="status",
         status=status,

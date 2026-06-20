@@ -41,7 +41,7 @@ variable "enable_event_driven" {
 variable "trigger_prefix" {
   description = "Inbound command trigger prefix. Rendered into config.toml and consumed by the cgc listener (DEFAULT_TRIGGER_PREFIX in messages.py)."
   type        = string
-  default     = "claude-command:"
+  default     = "claude:"
 }
 
 variable "poll_interval" {

@@ -28,7 +28,7 @@ STATUS_EMOJI: dict[str, str] = {
     "blocked": "⛔",  # no entry
 }
 
-DEFAULT_TRIGGER_PREFIX = "claude-command:"
+DEFAULT_TRIGGER_PREFIX = "claude:"
 
 
 @dataclass(frozen=True)
@@ -96,17 +96,23 @@ def _envelope_dict(msg: ChatMessage) -> dict[str, object]:
     }
 
 
-def format_message(msg: ChatMessage) -> str:
+def format_message(msg: ChatMessage, *, include_envelope: bool = True) -> str:
     """Produce the on-the-wire Google Chat text for a message.
 
-    The wire form is a human-readable summary line followed by a fenced code
-    block containing the JSON envelope. A timestamp is populated if absent.
+    The summary line is always a human-readable, emoji-prefixed line. When
+    ``include_envelope`` is ``True`` (the default, used by machine-to-machine and
+    log callers), the summary is followed by a fenced code block containing the
+    JSON envelope. When ``include_envelope`` is ``False`` the return value is the
+    summary line alone (no fenced JSON), keeping human-facing Chat messages
+    clean. A timestamp is populated if absent in either case.
     """
     populated = msg if msg.ts else replace(msg, ts=_now_rfc3339())
     _validate(populated)
 
     emoji = STATUS_EMOJI[populated.status] if populated.status else ""
     summary = f"{emoji} {populated.text}".strip()
+    if not include_envelope:
+        return summary
     envelope = json.dumps(_envelope_dict(populated), indent=2, sort_keys=True)
     return f"{summary}\n```\n{envelope}\n```"
 

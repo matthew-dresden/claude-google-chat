@@ -86,8 +86,11 @@ def test_journey_first_time_setup_and_status_ping(
 ) -> None:
     """A new user configures only a webhook and sends a status ping.
 
-    They run ``cgc chat send`` with the webhook URL supplied via the environment;
-    the webhook must receive the correctly-formatted structured payload.
+    They run ``cgc chat send`` with the webhook URL supplied via the environment.
+    With no ``--envelope`` flag and no ``send_envelope`` config the human-facing
+    Chat payload is the clean, emoji-prefixed summary line alone (no fenced JSON);
+    the machine-readable envelope is opt-in and covered separately. Passing
+    ``--envelope`` then proves the JSON envelope is appended on demand.
     """
     webhook_url = (
         "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=TEST_KEY&token=TEST_TOKEN"
@@ -104,8 +107,22 @@ def test_journey_first_time_setup_and_status_ping(
     payloads = webhook_payloads()
     assert len(payloads) == 1
     text = payloads[0]["text"]
-    assert text.splitlines()[0] == f"{STATUS_EMOJI['success']} deploy finished"
-    envelope = json.loads(text.split("```")[1])
+    # Clean by default: just the summary line, no fenced JSON envelope.
+    assert text == f"{STATUS_EMOJI['success']} deploy finished"
+    assert "```" not in text
+
+    # Opt-in: --envelope appends the machine-readable JSON envelope.
+    enveloped = runner.invoke(
+        app,
+        ["chat", "send", "--text", "deploy finished", "--status", "success", "--envelope"],
+        env=_cli_env(CGC_WEBHOOK_URL=webhook_url),
+    )
+    assert enveloped.exit_code == 0, enveloped.output
+    payloads = webhook_payloads()
+    assert len(payloads) == 2
+    enveloped_text = payloads[1]["text"]
+    assert enveloped_text.splitlines()[0] == f"{STATUS_EMOJI['success']} deploy finished"
+    envelope = json.loads(enveloped_text.split("```")[1])
     assert envelope["kind"] == "status"
     assert envelope["status"] == "success"
     assert envelope["text"] == "deploy finished"
@@ -133,11 +150,13 @@ def test_journey_inbound_command_gets_structured_reply(
     fake_chat_service,
     human_trigger_message,
 ) -> None:
-    """A teammate posts 'claude-command: status'; ``cgc serve --once`` replies.
+    """A teammate posts 'claude: status'; ``cgc serve --once`` replies.
 
     The Chat API is faked and injected at the discovery boundary; the serve loop
     fetches the message, recognises the owner trigger, and posts a structured
-    'result' reply back to the space.
+    'result' reply back to the space. ``send_envelope=True`` is set so the
+    posted Chat text carries the machine-readable JSON envelope this journey
+    asserts on (the clean-summary default is covered by the unit/chat tests).
     """
     # The owner posts a recognised trigger command.
     inbound = dict(human_trigger_message)
@@ -154,6 +173,7 @@ def test_journey_inbound_command_gets_structured_reply(
         space_id="spaces/AAAA",
         owner_email="owner@example.com",
         trigger_prefix=DEFAULT_TRIGGER_PREFIX,
+        send_envelope=True,
     )
 
     exit_code = run_serve(config, once=True)
