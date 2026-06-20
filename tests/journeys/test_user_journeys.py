@@ -149,6 +149,7 @@ def test_journey_inbound_command_gets_structured_reply(
     monkeypatch,
     fake_chat_service,
     human_trigger_message,
+    tmp_path,
 ) -> None:
     """A teammate posts 'claude: status'; ``cgc serve --once`` replies.
 
@@ -174,6 +175,7 @@ def test_journey_inbound_command_gets_structured_reply(
         owner_email="owner@example.com",
         trigger_prefix=DEFAULT_TRIGGER_PREFIX,
         send_envelope=True,
+        state_file=str(tmp_path / "state.json"),
     )
 
     exit_code = run_serve(config, once=True)
@@ -196,6 +198,7 @@ def test_journey_plain_message_is_not_executed(
     monkeypatch,
     fake_chat_service,
     human_plain_message,
+    tmp_path,
 ) -> None:
     """A plain chat line (no trigger prefix) produces no command side effects."""
     fake_chat_service.list_pages = [{"messages": [human_plain_message]}]
@@ -208,6 +211,7 @@ def test_journey_plain_message_is_not_executed(
         space_id="spaces/AAAA",
         owner_email="owner@example.com",
         trigger_prefix=DEFAULT_TRIGGER_PREFIX,
+        state_file=str(tmp_path / "state.json"),
     )
 
     exit_code = run_serve(config, once=True)

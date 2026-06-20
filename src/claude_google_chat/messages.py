@@ -168,6 +168,34 @@ def _parse_envelope(raw: str) -> ChatMessage:
     return msg
 
 
+def message_from_human_text(text: str, trigger_prefix: str = DEFAULT_TRIGGER_PREFIX) -> ChatMessage:
+    """Build a :class:`ChatMessage` from arbitrary human Chat text (never raises).
+
+    Used by the catch-all listener mode (``require_trigger=False``) to surface a
+    plain conversational message that does **not** start with the trigger prefix.
+    A trigger-prefixed line still parses as a structured command via
+    :func:`parse_message`; a non-prefixed line is represented as a ``command``
+    -kind message whose ``command`` is the first word and whose ``text`` carries
+    the full message body, so downstream consumers always receive a valid,
+    fully-populated envelope without :func:`parse_message`'s fail-fast contract.
+
+    This is intentionally distinct from :func:`parse_message`, whose contract is
+    to fail fast on text that is neither a trigger line nor a JSON envelope.
+    """
+    stripped = text.strip()
+    if stripped.startswith(trigger_prefix):
+        return parse_message(text, trigger_prefix=trigger_prefix)
+    parts = stripped.split()
+    command = parts[0] if parts else stripped
+    return ChatMessage(
+        kind="command",
+        text=stripped,
+        command=command,
+        args=parts[1:],
+        ts=_now_rfc3339(),
+    )
+
+
 def parse_message(text: str, trigger_prefix: str = DEFAULT_TRIGGER_PREFIX) -> ChatMessage:
     """Parse inbound Google Chat text into a :class:`ChatMessage`.
 

@@ -32,6 +32,12 @@ from claude_google_chat.messages import (
     parse_message,
 )
 from claude_google_chat.polling import PollLoop, run_to_exit_code
+from claude_google_chat.rawmessage import (
+    is_human_message,
+    sender_email,
+    thread_key,
+)
+from claude_google_chat.state import FileStateStore, StateStore
 
 # A responder maps an inbound (parsed) command message to an outbound reply, or
 # None to stay silent for that message.
@@ -71,34 +77,6 @@ def default_responder(message: ChatMessage) -> ChatMessage:
     )
 
 
-def _message_sender_email(raw: dict[str, Any]) -> str | None:
-    """Extract the sender's email from a raw Chat message resource, if present."""
-    sender = raw.get("sender")
-    if isinstance(sender, dict):
-        email = sender.get("email")
-        if isinstance(email, str) and email:
-            return email
-    return None
-
-
-def _is_app_message(raw: dict[str, Any]) -> bool:
-    """Return True if the message was sent by a bot/app (not a human)."""
-    sender = raw.get("sender")
-    if isinstance(sender, dict):
-        return sender.get("type") == "BOT"
-    return False
-
-
-def _thread_key(raw: dict[str, Any]) -> str | None:
-    """Return the message's thread name so replies stay in-thread, if present."""
-    thread = raw.get("thread")
-    if isinstance(thread, dict):
-        name = thread.get("name")
-        if isinstance(name, str) and name:
-            return name
-    return None
-
-
 class Responder:
     """Polls a Chat space as the app and responds to new owner messages."""
 
@@ -111,6 +89,7 @@ class Responder:
         poster: Poster | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
+        state_store: StateStore | None = None,
     ) -> None:
         """Initialise the responder loop.
 
@@ -126,6 +105,9 @@ class Responder:
             clock: Monotonic clock source (injectable for tests).
             sleeper: Cadence sleeper between polls (injectable; paces polling,
                 not a readiness wait).
+            state_store: Durable high-water store so a restart resumes instead
+                of re-replying to recent history. Injectable for tests; the CLI
+                supplies a file-backed store.
         """
         self._config = config
         self._responder = responder
@@ -139,6 +121,7 @@ class Responder:
             timeout_message=_timeout_message,
             clock=clock,
             sleeper=sleeper,
+            state_store=state_store,
         )
 
     @property
@@ -158,14 +141,14 @@ class Responder:
 
     def _should_handle(self, raw: dict[str, Any]) -> bool:
         """Return True if ``raw`` is a new, owner-authored trigger message."""
-        if _is_app_message(raw):
+        if not is_human_message(raw):
             return False
         text = raw.get("text", "")
         if not text.strip().startswith(self._config.trigger_prefix):
             return False
         owner = self._config.owner_email
         if owner:
-            sender = _message_sender_email(raw)
+            sender = sender_email(raw)
             if sender is None or sender.lower() != owner.lower():
                 return False
         return True
@@ -183,7 +166,7 @@ class Responder:
         reply = self._responder(inbound)
         if reply is None:
             return None
-        self._poster(reply, _thread_key(raw))
+        self._poster(reply, thread_key(raw))
         return reply
 
     def run(self, *, once: bool = False) -> list[ChatMessage]:
@@ -199,13 +182,23 @@ class Responder:
         return self._loop.run(once=once)
 
 
+def _state_store(config: Config) -> StateStore:
+    """Build the durable file-backed high-water store from ``config.state_file``."""
+    from pathlib import Path
+
+    assert config.state_file is not None  # always resolved by Config.load
+    return FileStateStore(Path(config.state_file))
+
+
 def run(config: Config, *, once: bool = False) -> int:
     """Run the serve loop; return a process exit code.
 
     Returns 0 on a clean ``--once`` drain, and non-zero on idle-timeout
-    expiry (fail fast with a clear diagnostic on stderr).
+    expiry or consecutive-error exhaustion (fail fast with a clear diagnostic on
+    stderr). The high-water cursor is persisted to ``state_file`` so a restart
+    resumes instead of re-replying to recent history.
     """
-    responder = Responder(config)
+    responder = Responder(config, state_store=_state_store(config))
     return run_to_exit_code(lambda: responder.run(once=once), ServeTimeout)
 
 

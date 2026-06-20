@@ -74,7 +74,13 @@ cgc listen --timeout 300            # exit non-zero if idle for 300 seconds
 cgc listen --space-id spaces/AAAA   # override the configured space for this run
 ```
 
-Each new message is emitted as a single JSON line to stdout. Only messages whose text starts with the configured trigger prefix (default `claude:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing.
+Each new message is emitted as a single JSON line to stdout. By default (`require_trigger = true`) only messages whose text starts with the configured trigger prefix (default `claude:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing.
+
+**Catch-all mode (`require_trigger = false`).** Set `require_trigger = false` (`CGC_REQUIRE_TRIGGER=false`) to surface **every** message from a HUMAN sender, not just trigger-prefixed ones. Trigger-prefixed lines still parse as structured commands; plain conversational lines are surfaced as a message carrying the full text. Non-human senders (BOT/app/webhook) are always excluded, so the listener never echoes its own outbound posts or other bots (loop prevention).
+
+**Resilience.** A transient backend hiccup — a socket/connection timeout, a dropped connection, or a Chat API `408`/`429`/`5xx` — is logged to stderr as a concise, secret-free diagnostic and the loop continues on the normal cadence rather than crashing. A fatal auth/permission error (`401`/`403`) still fails fast immediately with an actionable message. After `max_consecutive_errors` (`CGC_MAX_CONSECUTIVE_ERRORS`, default `10`) **consecutive** transient failures the loop fails fast with a non-zero exit so a truly-down backend surfaces; the counter resets on any successful poll.
+
+**Durable resume.** The poll high-water marker is persisted to `state_file` (`CGC_STATE_FILE`, default `<config_dir>/listen-state.json`, written `0600`). On restart the listener resumes from the last-processed message instead of re-reading recent history and re-emitting already-seen messages. A missing or corrupt state file degrades to a fresh start, never a crash.
 
 ### `cgc setup`
 
@@ -106,6 +112,8 @@ cgc serve --once                    # handle pending owner messages once and exi
 cgc serve --timeout 600             # exit non-zero if idle for 600 seconds
 cgc serve --space-id spaces/AAAA    # override the configured space for this run
 ```
+
+`serve` uses the same resilient poll loop as `listen`: transient backend errors are logged and skipped, fatal `401`/`403` auth errors fail fast, the `max_consecutive_errors` bound surfaces a truly-down backend, and the high-water marker is persisted to `state_file` so a restart never re-replies to recent history. `require_trigger` does not affect `serve` — it always responds only to owner trigger-prefixed messages.
 
 ### `cgc status`
 
@@ -220,8 +228,10 @@ This runs `cgc listen <args>`. Each emitted line is a structured JSON message. `
 
 - The listener polls the space on a **documented, env-driven cadence** (`CGC_POLL_INTERVAL`, default `2.0` seconds). The poll interval is a deliberate cadence, not a `sleep`-based readiness wait.
 - It tracks the last seen message id and yields only newer messages.
-- It filters to messages whose text starts with the trigger prefix.
+- It filters to messages whose text starts with the trigger prefix — unless `require_trigger = false`, in which case every HUMAN message is surfaced (bots/own posts always excluded).
 - An **idle timeout** (`CGC_LISTEN_TIMEOUT`, default `0` = run forever) causes a **fail-fast non-zero exit** with a clear diagnostic when no qualifying message arrives within the window.
+- **Transient backend errors are survived**: a socket/connection timeout, dropped connection, or Chat API `408`/`429`/`5xx` is logged to stderr and the loop continues. A fatal `401`/`403` fails fast immediately. After `max_consecutive_errors` consecutive transient failures the loop fails fast (the counter resets on any success).
+- The high-water marker is **persisted to `state_file`**, so a restart resumes from the last-processed message and never re-emits already-seen history.
 - `--once` drains currently-pending messages and returns, so it composes cleanly with hooks and CI.
 - Output is unbuffered JSON lines on stdout (12-factor logs).
 

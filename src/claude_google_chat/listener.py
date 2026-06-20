@@ -20,8 +20,10 @@ from typing import Any
 
 from claude_google_chat.chat import list_messages
 from claude_google_chat.config import Config
-from claude_google_chat.messages import ChatMessage, parse_message
+from claude_google_chat.messages import ChatMessage, message_from_human_text, parse_message
 from claude_google_chat.polling import PollLoop, run_to_exit_code
+from claude_google_chat.rawmessage import is_human_message
+from claude_google_chat.state import FileStateStore, StateStore
 
 
 class ListenerTimeout(RuntimeError):
@@ -44,6 +46,7 @@ class Listener:
         fetcher: Callable[[Config, str | None], list[dict[str, Any]]] | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleeper: Callable[[float], None] = time.sleep,
+        state_store: StateStore | None = None,
     ) -> None:
         """Initialise the listener.
 
@@ -55,6 +58,9 @@ class Listener:
             clock: Monotonic clock source (injectable for tests).
             sleeper: Cadence sleeper between polls (injectable for tests). This
                 paces polling; it is not a readiness wait.
+            state_store: Durable high-water store so a restart resumes instead
+                of re-emitting recent history. Injectable for tests; the CLI
+                supplies a file-backed store.
         """
         self._config = config
         resolved_fetcher = fetcher or (lambda cfg, since: list_messages(cfg, since=since))
@@ -66,15 +72,30 @@ class Listener:
             timeout_message=_timeout_message,
             clock=clock,
             sleeper=sleeper,
+            state_store=state_store,
         )
 
     def _handle(self, raw: dict[str, Any]) -> ChatMessage | None:
-        """Return a parsed message if its text starts with the trigger prefix."""
+        """Decide whether and how to emit a raw Chat message.
+
+        With ``require_trigger`` set (the default), only messages whose text
+        starts with the trigger prefix are emitted, parsed as structured
+        commands. With ``require_trigger`` cleared (catch-all mode), **every**
+        message from a HUMAN sender is surfaced — a trigger-prefixed line still
+        parses as a command, while a plain conversational line is surfaced via
+        :func:`message_from_human_text`. Non-human senders (BOT/app/webhook) are
+        never surfaced in either mode, so the listener never echoes its own
+        outbound posts or other bots (loop prevention).
+        """
         prefix = self._config.trigger_prefix
         text = raw.get("text", "")
-        if not text.strip().startswith(prefix):
+        if self._config.require_trigger:
+            if not text.strip().startswith(prefix):
+                return None
+            return parse_message(text, trigger_prefix=prefix)
+        if not is_human_message(raw):
             return None
-        return parse_message(text, trigger_prefix=prefix)
+        return message_from_human_text(text, trigger_prefix=prefix)
 
     def iter_new_messages(self, *, once: bool = False) -> Iterator[ChatMessage]:
         """Yield newly-seen trigger-prefixed messages.
@@ -99,11 +120,21 @@ class Listener:
         return self._loop.run(once=once)
 
 
+def _state_store(config: Config) -> StateStore:
+    """Build the durable file-backed high-water store from ``config.state_file``."""
+    from pathlib import Path
+
+    assert config.state_file is not None  # always resolved by Config.load
+    return FileStateStore(Path(config.state_file))
+
+
 def run(config: Config, *, once: bool = False) -> int:
     """Run the listener, emitting one JSON line per message to stdout.
 
     Returns a process exit code: 0 on clean completion (``--once`` drain), and
-    non-zero on idle timeout (fail fast with a clear diagnostic on stderr).
+    non-zero on idle timeout or consecutive-error exhaustion (fail fast with a
+    clear diagnostic on stderr). The high-water cursor is persisted to
+    ``state_file`` so a restart resumes instead of re-emitting recent history.
     """
-    listener = Listener(config)
+    listener = Listener(config, state_store=_state_store(config))
     return run_to_exit_code(lambda: listener.run_to_stdout(once=once), ListenerTimeout)
