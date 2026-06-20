@@ -53,6 +53,7 @@ The config file is read with the Python 3.11+ stdlib `tomllib` module. Writes fr
 | **`send_envelope`**<br>`CGC_SEND_ENVELOPE` | Append the machine-readable JSON envelope to outbound Chat text (`cgc chat send`). Boolean (`true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`, case-insensitive; unparseable values fail fast). Optional · default `false` — the human-facing Chat view is the clean summary line only. The machine channel is the JSONL on `cgc listen` stdout. Override per send with `cgc chat send --envelope` / `--no-envelope`. |
 | **`max_consecutive_errors`**<br>`CGC_MAX_CONSECUTIVE_ERRORS` | Number of **consecutive** transient poll failures (`listen`) tolerated before the loop fails fast with a non-zero exit and a clear diagnostic. Transient errors (socket/connection timeouts, dropped connections, Chat API `408`/`429`/`5xx`) are logged and skipped; the counter resets to zero on any successful poll, so isolated hiccups never trip it but a truly-down backend still surfaces. Integer (unparseable values fail fast). Optional · default `10`. |
 | **`state_file`**<br>`CGC_STATE_FILE` | Path to the durable high-water state file for `listen`. On startup the last-processed message time is loaded from it; on each emitted/seen message it is updated and persisted (written with `0600` permissions). This makes a restart **resume** from the last processed message instead of re-reading recent history and re-emitting already-seen messages. A missing or corrupt file is treated as a fresh start (never a crash). Optional · default `<config_dir>/listen-state.json`. |
+| **`threads`**<br>`CGC_THREADS` | Optional thread filter for `cgc listen`. When one or more thread resource names (`spaces/.../threads/...`) are configured, the listener emits **only** messages whose raw `thread.name` is in this set — applied *in addition to* the sender-type (HUMAN-only) and `require_trigger` logic. When empty (default) the whole space is surfaced (unchanged). In `config.toml` this is a TOML array of strings; as the `CGC_THREADS` env var it is a **comma-separated** list (whitespace trimmed, empty entries dropped). Override per run with one or more `cgc listen --thread <THREAD_NAME>` flags. Optional · default empty (no filter). |
 | **`require_trigger`**<br>`CGC_REQUIRE_TRIGGER` | Controls which inbound messages `cgc listen` emits. When `true` (default, current behavior) only messages whose text starts with `trigger_prefix` are emitted (parsed as commands). When `false` (catch-all mode) **every** message from a HUMAN sender is surfaced regardless of prefix — trigger-prefixed lines still parse as structured commands, while plain conversational lines are surfaced as a message carrying the full text. Non-human senders (BOT/app/webhook) are always excluded so the listener never echoes its own outbound posts or other bots (loop prevention). Boolean (`true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`, case-insensitive; unparseable values fail fast). Optional · default `true`. |
 
 ### Which keys are required when
@@ -74,6 +75,7 @@ trigger_prefix = "claude:"
 poll_interval = 2.0
 listen_timeout = 0
 # send_envelope = false  # default: keep human Chat messages clean (opt in to embed JSON)
+# threads = ["spaces/AAAA/threads/T1"]  # optional: listen only in these threads
 ```
 
 Equivalent environment configuration:
@@ -119,6 +121,17 @@ All four are configurable via environment variable or the config file; none is h
 - `state_file` makes the poll high-water marker **durable**: a restart resumes from the last-processed message instead of re-reading recent history and re-emitting already-seen messages. The file is written with `0600` permissions; a missing or corrupt file degrades to a fresh start (never a crash).
 
 Neither value is hardcoded; both come from the environment or the config file.
+
+---
+
+## Thread routing
+
+`claude-google-chat` can post into, and read from, specific Google Chat threads.
+
+- **Send into a thread** — `cgc chat send --thread-key <KEY>` posts via the incoming webhook using a caller-defined thread key (`messageReplyOption=REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD` + `thread.threadKey`). Repeated sends with the **same** key land in the same thread; an **unseen** key starts a new thread. The created message's stable `thread.name` is printed to **stderr** (`thread: spaces/.../threads/...`) so you can capture it for read-filtering; stdout stays the `sent` line. With no `--thread-key`, sends are unthreaded (unchanged).
+- **Filter listen by thread** — set `threads` (config array or `CGC_THREADS` comma list) or pass one or more `cgc listen --thread <THREAD_NAME>` flags to restrict emission to those threads. The filter composes with the trigger / sender-type rules. Each emitted JSON event includes a `thread_name` field naming the owning thread (`null` when the message is unthreaded), so a consumer knows which thread a message belongs to.
+
+A typical loop is: `cgc chat send --thread-key deploy-42 ...` (capture the printed `thread.name`), then `cgc listen --thread <that-thread-name>` to read only replies in that thread.
 
 ---
 

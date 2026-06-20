@@ -63,6 +63,16 @@ cgc chat send --status success --text "Build is green" --no-envelope   # force c
 
 `--envelope` / `--no-envelope` is tri-state: omit it to use the resolved `send_envelope` config value (default `false`); pass either flag to override config for that one send.
 
+**Post into a thread (`--thread-key`).** Pass `--thread-key <KEY>` to route the message into a caller-keyed thread: repeated sends with the **same** key land in the same thread, an **unseen** key starts a new one. The created message's stable `thread.name` is printed to **stderr** so you can capture it for read-filtering; stdout stays the `sent` line.
+
+```bash
+cgc chat send --status working --text "Deploying" --thread-key deploy-42
+# stderr: thread: spaces/AAAA/threads/abcd1234
+# stdout: sent
+```
+
+Capture the printed thread name to later read only that thread with `cgc listen --thread <THREAD_NAME>`. With no `--thread-key`, sends are unthreaded (unchanged behaviour).
+
 ### `cgc listen`
 
 Start the inbound listener.
@@ -72,9 +82,12 @@ cgc listen                          # run forever; idle timeout from CGC_LISTEN_
 cgc listen --once                   # drain currently-pending messages and exit (for hooks/CI)
 cgc listen --timeout 300            # exit non-zero if idle for 300 seconds
 cgc listen --space-id spaces/AAAA   # override the configured space for this run
+cgc listen --thread spaces/AAAA/threads/T1 --thread spaces/AAAA/threads/T2  # only these threads
 ```
 
-Each new message is emitted as a single JSON line to stdout. By default (`require_trigger = true`) only messages whose text starts with the configured trigger prefix (default `claude:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing.
+Each new message is emitted as a single JSON line to stdout. By default (`require_trigger = true`) only messages whose text starts with the configured trigger prefix (default `claude:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing. Each emitted JSON event carries a `thread_name` field naming the thread the message belongs to (`null` when the message is unthreaded).
+
+**Filter by thread (`--thread` / `threads`).** Pass one or more `--thread <THREAD_NAME>` flags (or set `threads` in config / `CGC_THREADS` as a comma list) to emit **only** messages whose `thread.name` is in that set. The thread filter composes *in addition to* the trigger and sender-type rules; with no threads configured the whole space is surfaced (unchanged). This pairs with `cgc chat send --thread-key` (capture the printed `thread.name`, then listen on it) to scope a two-way conversation to a single thread.
 
 **Catch-all mode (`require_trigger = false`).** Set `require_trigger = false` (`CGC_REQUIRE_TRIGGER=false`) to surface **every** message from a HUMAN sender, not just trigger-prefixed ones. Trigger-prefixed lines still parse as structured commands; plain conversational lines are surfaced as a message carrying the full text. Non-human senders (BOT/app/webhook) are always excluded, so the listener never echoes its own outbound posts or other bots (loop prevention).
 
@@ -225,7 +238,8 @@ Both directions use one envelope (defined in `messages.py`). The JSON object:
   "command": null,
   "args": [],
   "ts": "2026-06-19T12:00:00Z",
-  "correlation_id": null
+  "correlation_id": null,
+  "thread_name": null
 }
 ```
 
@@ -239,6 +253,7 @@ Fields:
 - `args` — array of string arguments.
 - `ts` — RFC3339 UTC timestamp.
 - `correlation_id` — optional, links a result back to a command.
+- `thread_name` — optional Chat thread resource name (`spaces/.../threads/...`) the message belongs to, surfaced on inbound `cgc listen` events so a consumer knows which thread a message is in; `null` when unthreaded.
 
 ### On-the-wire (outbound)
 

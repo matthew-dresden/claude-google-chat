@@ -23,6 +23,7 @@ from googleapiclient.errors import HttpError
 
 from claude_google_chat import chat
 from claude_google_chat.messages import ChatMessage, format_message
+from tests.conftest import SPACE_ID
 
 # --------------------------------------------------------------------------- #
 # send_webhook (real requests path, mocked HTTP).
@@ -122,6 +123,107 @@ def test_send_webhook_2xx_non_200_is_accepted(
 
     # 204 is a 2xx response; send_webhook must not raise.
     chat.send_webhook(config, msg)
+
+
+# --------------------------------------------------------------------------- #
+# send_webhook thread routing (--thread-key path).
+# --------------------------------------------------------------------------- #
+
+
+def test_send_webhook_without_thread_key_omits_thread_and_returns_none(
+    make_config: Any,
+    mocked_webhook: Any,
+    webhook_payloads: Any,
+    frozen_clock: str,
+) -> None:
+    """The non-threaded path is unchanged: no thread body, no reply option, None."""
+    config = make_config()
+    msg = ChatMessage(kind="status", status="success", text="hi")
+
+    result = chat.send_webhook(config, msg)
+
+    assert result is None
+    payloads = webhook_payloads()
+    assert len(payloads) == 1
+    assert "thread" not in payloads[0]
+    # The reply-option query param must not be appended on the unthreaded path.
+    posted_url = mocked_webhook.calls[0].request.url
+    assert "messageReplyOption" not in posted_url
+
+
+def test_send_webhook_with_thread_key_adds_reply_option_and_thread_key(
+    make_config: Any,
+    mocked_webhook: Any,
+    webhook_payloads: Any,
+    frozen_clock: str,
+) -> None:
+    """A thread key appends the reply-option param and sets thread.threadKey."""
+    mocked_webhook.reset()
+    from tests.conftest import WEBHOOK_URL
+
+    created_thread = f"{SPACE_ID}/threads/T-created"
+    mocked_webhook.add(
+        "POST",
+        f"{WEBHOOK_URL}&{chat.THREAD_REPLY_OPTION}",
+        json={"name": f"{SPACE_ID}/messages/m1", "thread": {"name": created_thread}},
+        status=200,
+    )
+
+    config = make_config()
+    msg = ChatMessage(kind="status", status="working", text="deploying")
+
+    result = chat.send_webhook(config, msg, thread_key="deploy-42")
+
+    # The created thread.name is returned for read-filtering.
+    assert result == created_thread
+    payloads = webhook_payloads()
+    assert payloads[0]["thread"] == {"threadKey": "deploy-42"}
+    posted_url = mocked_webhook.calls[0].request.url
+    assert chat.THREAD_REPLY_OPTION in posted_url
+
+
+def test_send_webhook_threaded_returns_none_when_response_has_no_thread(
+    make_config: Any,
+    mocked_webhook: Any,
+    frozen_clock: str,
+) -> None:
+    """A threaded send whose response carries no thread.name returns None."""
+    mocked_webhook.reset()
+    from tests.conftest import WEBHOOK_URL
+
+    mocked_webhook.add(
+        "POST",
+        f"{WEBHOOK_URL}&{chat.THREAD_REPLY_OPTION}",
+        json={"name": f"{SPACE_ID}/messages/m2"},
+        status=200,
+    )
+    config = make_config()
+    msg = ChatMessage(kind="status", status="info", text="x")
+
+    assert chat.send_webhook(config, msg, thread_key="k1") is None
+
+
+def test_send_webhook_threaded_non_2xx_redacts_url(
+    make_config: Any,
+    mocked_webhook: Any,
+    frozen_clock: str,
+) -> None:
+    """A failing threaded send fails fast with a redacted (secret-free) URL."""
+    mocked_webhook.reset()
+    from tests.conftest import WEBHOOK_URL
+
+    mocked_webhook.add("POST", f"{WEBHOOK_URL}&{chat.THREAD_REPLY_OPTION}", status=500)
+    config = make_config()
+    msg = ChatMessage(kind="status", status="error", text="boom")
+
+    with pytest.raises(requests.HTTPError) as exc_info:
+        chat.send_webhook(config, msg, thread_key="k1")
+
+    message = str(exc_info.value)
+    assert "500" in message
+    assert "TEST_KEY" not in message
+    assert "TEST_TOKEN" not in message
+    assert "messageReplyOption" not in message
 
 
 # --------------------------------------------------------------------------- #

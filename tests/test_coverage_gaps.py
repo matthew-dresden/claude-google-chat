@@ -23,7 +23,7 @@ import pytest
 from claude_google_chat import chat as chat_module
 from claude_google_chat import config as config_module
 from claude_google_chat.config import Config, _toml_value, default_config_path
-from claude_google_chat.rawmessage import is_human_message
+from claude_google_chat.rawmessage import is_human_message, thread_name
 
 
 def _config(**overrides: Any) -> Config:
@@ -77,6 +77,27 @@ def test_build_service_wires_user_credentials_into_discovery_build(
 def test_is_human_message_returns_false_for_non_dict_sender() -> None:
     """A non-dict ``sender`` is not classified as a human message."""
     assert is_human_message({"sender": None}) is False
+
+
+def test_thread_name_extracts_resource_name() -> None:
+    """A present ``thread.name`` is returned verbatim."""
+    raw = {"thread": {"name": "spaces/AAAA/threads/T9"}}
+    assert thread_name(raw) == "spaces/AAAA/threads/T9"
+
+
+def test_thread_name_returns_none_for_non_dict_thread() -> None:
+    """A non-dict ``thread`` yields ``None`` instead of raising."""
+    assert thread_name({"thread": None}) is None
+
+
+def test_thread_name_returns_none_when_thread_absent() -> None:
+    """A message with no ``thread`` key yields ``None``."""
+    assert thread_name({"text": "hi"}) is None
+
+
+def test_thread_name_returns_none_for_empty_name() -> None:
+    """An empty thread name string is treated as absent (``None``)."""
+    assert thread_name({"thread": {"name": ""}}) is None
 
 
 # --------------------------------------------------------------------------- #

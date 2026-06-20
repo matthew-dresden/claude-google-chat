@@ -94,3 +94,56 @@ def test_token_file_redacted() -> None:
     config = Config(token_file="/secret/path/token.json")
     redacted = config.redacted()
     assert redacted["token_file"] != "/secret/path/token.json"
+
+
+def test_threads_default_is_empty_tuple(tmp_path: Path) -> None:
+    minimal = tmp_path / "minimal.toml"
+    minimal.write_text('webhook_url = "https://example/x"\n', encoding="utf-8")
+    config = Config.load(path=minimal, env={})
+    assert config.threads == ()
+
+
+def test_threads_from_toml_array(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(
+        'threads = ["spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2"]\n',
+        encoding="utf-8",
+    )
+    config = Config.load(path=path, env={})
+    assert config.threads == ("spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2")
+
+
+def test_threads_from_env_comma_list(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text("# empty\n", encoding="utf-8")
+    config = Config.load(
+        path=path,
+        env={"CGC_THREADS": " spaces/AAAA/threads/A , spaces/AAAA/threads/B ,"},
+    )
+    # Whitespace trimmed, empty trailing entry dropped.
+    assert config.threads == ("spaces/AAAA/threads/A", "spaces/AAAA/threads/B")
+
+
+def test_threads_env_overrides_file(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text('threads = ["spaces/AAAA/threads/FILE"]\n', encoding="utf-8")
+    config = Config.load(path=path, env={"CGC_THREADS": "spaces/AAAA/threads/ENV"})
+    assert config.threads == ("spaces/AAAA/threads/ENV",)
+
+
+def test_threads_round_trips_through_write_and_load(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    merge_and_write_config(
+        {"threads": ["spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2"]},
+        path=path,
+    )
+    reloaded = Config.load(path=path, env={})
+    assert reloaded.threads == ("spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2")
+
+
+def test_threads_rejects_non_string_list_element() -> None:
+    from claude_google_chat.config import _parse_threads
+
+    with pytest.raises(ValueError) as exc_info:
+        _parse_threads(["spaces/AAAA/threads/T1", 42])
+    assert "threads" in str(exc_info.value)

@@ -342,6 +342,232 @@ def test_require_trigger_true_path_unchanged(
     assert emitted[0].command == "deploy"
 
 
+# --------------------------------------------------------------------------- #
+# Thread routing: --thread / threads filter + thread_name on emitted events.
+# These compose with require_trigger and the sender-type filter.
+# --------------------------------------------------------------------------- #
+
+
+def test_thread_name_is_carried_on_emitted_message(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """The owning raw ``thread.name`` is surfaced on each emitted ChatMessage."""
+    raw = make_raw_message(
+        text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
+        thread="spaces/AAAA/threads/T-emit",
+    )
+    fetch, _ = _scripted_fetcher([[raw]])
+    listener = Listener(_config(), fetcher=fetch)
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert len(emitted) == 1
+    assert emitted[0].thread_name == "spaces/AAAA/threads/T-emit"
+
+
+def test_thread_name_is_none_when_message_unthreaded(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """An unthreaded message surfaces ``thread_name=None`` (no filter configured)."""
+    raw = make_raw_message(text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod", thread=None)
+    fetch, _ = _scripted_fetcher([[raw]])
+    listener = Listener(_config(), fetcher=fetch)
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert len(emitted) == 1
+    assert emitted[0].thread_name is None
+
+
+def test_thread_filter_emits_only_in_thread_messages(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """With a thread filter, only messages in a configured thread are emitted."""
+    in_thread = make_raw_message(
+        name="spaces/AAAA/messages/in",
+        text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
+        thread="spaces/AAAA/threads/keep",
+    )
+    out_thread = make_raw_message(
+        name="spaces/AAAA/messages/out",
+        text=f"{DEFAULT_TRIGGER_PREFIX} rollback staging",
+        thread="spaces/AAAA/threads/other",
+    )
+    fetch, _ = _scripted_fetcher([[in_thread, out_thread]])
+    listener = Listener(
+        _config(threads=("spaces/AAAA/threads/keep",)),
+        fetcher=fetch,
+    )
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert [m.command for m in emitted] == ["deploy"]
+    assert emitted[0].thread_name == "spaces/AAAA/threads/keep"
+
+
+def test_thread_filter_drops_unthreaded_messages(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """A message with no thread is dropped when a thread filter is configured."""
+    unthreaded = make_raw_message(text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod", thread=None)
+    fetch, _ = _scripted_fetcher([[unthreaded]])
+    listener = Listener(_config(threads=("spaces/AAAA/threads/keep",)), fetcher=fetch)
+
+    assert list(listener.iter_new_messages(once=True)) == []
+
+
+def test_thread_filter_accepts_multiple_threads(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """Multiple configured threads each admit their messages."""
+    a = make_raw_message(
+        name="spaces/AAAA/messages/a",
+        text=f"{DEFAULT_TRIGGER_PREFIX} a",
+        thread="spaces/AAAA/threads/T1",
+    )
+    b = make_raw_message(
+        name="spaces/AAAA/messages/b",
+        text=f"{DEFAULT_TRIGGER_PREFIX} b",
+        thread="spaces/AAAA/threads/T2",
+    )
+    c = make_raw_message(
+        name="spaces/AAAA/messages/c",
+        text=f"{DEFAULT_TRIGGER_PREFIX} c",
+        thread="spaces/AAAA/threads/T3",
+    )
+    fetch, _ = _scripted_fetcher([[a, b, c]])
+    listener = Listener(
+        _config(threads=("spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2")),
+        fetcher=fetch,
+    )
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert {m.command for m in emitted} == {"a", "b"}
+
+
+def test_thread_filter_composes_with_require_trigger(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """In-thread but non-trigger lines are still dropped under require_trigger."""
+    trigger = make_raw_message(
+        name="spaces/AAAA/messages/t",
+        text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
+        thread="spaces/AAAA/threads/keep",
+    )
+    plain = make_raw_message(
+        name="spaces/AAAA/messages/p",
+        text="just chatting, no command",
+        thread="spaces/AAAA/threads/keep",
+    )
+    fetch, _ = _scripted_fetcher([[trigger, plain]])
+    listener = Listener(
+        _config(threads=("spaces/AAAA/threads/keep",), require_trigger=True),
+        fetcher=fetch,
+    )
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    # Both are in-thread, but only the trigger-prefixed line passes require_trigger.
+    assert [m.command for m in emitted] == ["deploy"]
+
+
+def test_thread_filter_composes_with_sender_filter_in_catch_all(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """In catch-all mode the thread filter and HUMAN-only filter compose."""
+    human = make_raw_message(
+        name="spaces/AAAA/messages/h",
+        text="hello team",
+        sender_type="HUMAN",
+        thread="spaces/AAAA/threads/keep",
+    )
+    bot = make_raw_message(
+        name="spaces/AAAA/messages/b",
+        text="bot says hi",
+        sender_type="BOT",
+        email=None,
+        thread="spaces/AAAA/threads/keep",
+    )
+    fetch, _ = _scripted_fetcher([[human, bot]])
+    listener = Listener(
+        _config(threads=("spaces/AAAA/threads/keep",), require_trigger=False),
+        fetcher=fetch,
+    )
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    # The bot message is in-thread but excluded as a non-human sender.
+    assert len(emitted) == 1
+    assert emitted[0].text == "hello team"
+    assert emitted[0].thread_name == "spaces/AAAA/threads/keep"
+
+
+def test_no_thread_filter_surfaces_whole_space(
+    frozen_clock: str,
+    make_raw_message: Any,
+) -> None:
+    """With no threads configured, messages in any thread are surfaced (unchanged)."""
+    a = make_raw_message(
+        name="spaces/AAAA/messages/a",
+        text=f"{DEFAULT_TRIGGER_PREFIX} a",
+        thread="spaces/AAAA/threads/T1",
+    )
+    b = make_raw_message(
+        name="spaces/AAAA/messages/b",
+        text=f"{DEFAULT_TRIGGER_PREFIX} b",
+        thread="spaces/AAAA/threads/T2",
+    )
+    fetch, _ = _scripted_fetcher([[a, b]])
+    listener = Listener(_config(), fetcher=fetch)
+
+    emitted = list(listener.iter_new_messages(once=True))
+
+    assert {m.command for m in emitted} == {"a", "b"}
+
+
+def test_thread_name_appears_in_emitted_json_line(
+    frozen_clock: str,
+    monkeypatch: pytest.MonkeyPatch,
+    make_raw_message: Any,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Any,
+) -> None:
+    """The emitted stdout JSON line includes the owning ``thread_name``."""
+    import json
+
+    raw = make_raw_message(
+        text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
+        thread="spaces/AAAA/threads/T-json",
+    )
+    monkeypatch.setattr(
+        "claude_google_chat.listener.list_messages",
+        lambda config, since=None: [raw],
+    )
+
+    exit_code = run(
+        _config(
+            threads=("spaces/AAAA/threads/T-json",),
+            state_file=str(tmp_path / "state.json"),
+        ),
+        once=True,
+    )
+
+    assert exit_code == 0
+    out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert len(out_lines) == 1
+    record = json.loads(out_lines[0])
+    assert record["thread_name"] == "spaces/AAAA/threads/T-json"
+    assert record["command"] == "deploy"
+
+
 def test_run_returns_nonzero_on_idle_timeout(
     frozen_clock: str,
     monkeypatch: pytest.MonkeyPatch,

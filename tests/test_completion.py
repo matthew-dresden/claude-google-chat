@@ -125,6 +125,23 @@ def test_complete_trigger_prefix_from_config(patched_config_path: Path) -> None:
     assert completion.complete_trigger_prefix("") == ["ops-command:"]
 
 
+def test_complete_thread_from_config(patched_config_path: Path) -> None:
+    patched_config_path.parent.mkdir(parents=True, exist_ok=True)
+    patched_config_path.write_text(
+        'threads = ["spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2"]\n',
+        encoding="utf-8",
+    )
+    assert set(completion.complete_thread("")) == {
+        "spaces/AAAA/threads/T1",
+        "spaces/AAAA/threads/T2",
+    }
+
+
+def test_complete_thread_empty_when_unset(patched_config_path: Path) -> None:
+    _write_config(patched_config_path, space_id="spaces/AAAA")
+    assert completion.complete_thread("") == []
+
+
 def test_config_derived_completers_safe_without_file(patched_config_path: Path) -> None:
     # No config file written -> optional-value completers must return [] not raise.
     assert completion.complete_space_id("") == []
@@ -145,6 +162,7 @@ def test_config_derived_completers_safe_on_load_error(
     assert completion._load_config_safely() is None
     assert completion.complete_space_id("") == []
     assert completion.complete_trigger_prefix("") == []
+    assert completion.complete_thread("") == []
 
 
 def test_detect_shell_returns_name_or_none() -> None:

@@ -2,10 +2,12 @@
 
 The listener polls the configured space on an env-driven cadence
 (``poll_interval``) and yields newly-seen messages whose text starts with the
-configured trigger prefix. The poll interval is a documented cadence, not a
-readiness ``sleep``; an idle ``listen_timeout`` (when > 0) causes a fail-fast
-non-zero exit with a clear diagnostic. Each emitted message is written to
-stdout as a single JSON line (12-factor logs).
+configured trigger prefix. When one or more ``threads`` are configured it
+further restricts emission to messages in those threads. The poll interval is a
+documented cadence, not a readiness ``sleep``; an idle ``listen_timeout`` (when
+> 0) causes a fail-fast non-zero exit with a clear diagnostic. Each emitted
+message is written to stdout as a single JSON line (12-factor logs) and carries
+the owning ``thread_name``.
 
 The dedup/high-water bookkeeping, idle-timeout run loop, and stdout JSON-line
 emission are provided by the shared :class:`claude_google_chat.polling.PollLoop`
@@ -16,13 +18,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from typing import Any
 
 from claude_google_chat.chat import list_messages
 from claude_google_chat.config import Config
 from claude_google_chat.messages import ChatMessage, message_from_human_text, parse_message
 from claude_google_chat.polling import PollLoop, run_to_exit_code
-from claude_google_chat.rawmessage import is_human_message
+from claude_google_chat.rawmessage import is_human_message, thread_name
 from claude_google_chat.state import FileStateStore, StateStore
 
 
@@ -86,16 +89,30 @@ class Listener:
         :func:`message_from_human_text`. Non-human senders (BOT/app/webhook) are
         never surfaced in either mode, so the listener never echoes its own
         outbound posts or other bots (loop prevention).
+
+        When one or more ``threads`` are configured, a message is emitted only
+        when its raw ``thread.name`` is in that set — this filter composes with
+        (is applied *in addition to*) the trigger / sender-type logic above.
+        With no threads configured the whole space is surfaced (unchanged). The
+        owning ``thread.name`` is always carried on the emitted message so a
+        consumer knows which thread it belongs to.
         """
+        raw_thread = thread_name(raw)
+        threads = self._config.threads
+        if threads and raw_thread not in threads:
+            return None
+
         prefix = self._config.trigger_prefix
         text = raw.get("text", "")
         if self._config.require_trigger:
             if not text.strip().startswith(prefix):
                 return None
-            return parse_message(text, trigger_prefix=prefix)
-        if not is_human_message(raw):
-            return None
-        return message_from_human_text(text, trigger_prefix=prefix)
+            emitted = parse_message(text, trigger_prefix=prefix)
+        else:
+            if not is_human_message(raw):
+                return None
+            emitted = message_from_human_text(text, trigger_prefix=prefix)
+        return replace(emitted, thread_name=raw_thread)
 
     def iter_new_messages(self, *, once: bool = False) -> Iterator[ChatMessage]:
         """Yield newly-seen trigger-prefixed messages.

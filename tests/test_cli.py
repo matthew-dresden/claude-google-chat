@@ -67,6 +67,11 @@ def write_cli_config(cli_config_path: Path) -> Callable[..., Path]:
             return "true" if value else "false"
         if isinstance(value, (int, float)):
             return repr(value)
+        if isinstance(value, (list, tuple)):
+            inner = ", ".join(
+                '"{}"'.format(str(e).replace("\\", "\\\\").replace('"', '\\"')) for e in value
+            )
+            return f"[{inner}]"
         escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
         return f'"{escaped}"'
 
@@ -282,6 +287,44 @@ def test_chat_send_no_envelope_flag_overrides_config_false(
     assert result.exit_code == 0
     config_arg, _msg = sent.call_args.args
     assert config_arg.send_envelope is False
+
+
+def test_chat_send_thread_key_forwarded_and_prints_thread_name(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--thread-key`` is threaded through send_webhook; the thread.name prints."""
+    write_cli_config(webhook_url=WEBHOOK_URL)
+    sent = MagicMock(return_value=f"{SPACE_ID}/threads/T-new")
+    monkeypatch.setattr("claude_google_chat.chat.send_webhook", sent)
+
+    result = runner.invoke(
+        cli.app,
+        ["chat", "send", "--text", "deploying", "--thread-key", "deploy-7"],
+    )
+    assert result.exit_code == 0
+    # thread_key was forwarded to the transport.
+    assert sent.call_args.kwargs["thread_key"] == "deploy-7"
+    # The returned thread.name is surfaced on stderr (stdout stays the "sent" line).
+    assert "sent" in result.stdout
+    assert f"{SPACE_ID}/threads/T-new" in result.stderr
+
+
+def test_chat_send_without_thread_key_passes_none_and_no_thread_line(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no ``--thread-key`` the transport gets ``None`` and nothing is printed."""
+    write_cli_config(webhook_url=WEBHOOK_URL)
+    sent = MagicMock(return_value=None)
+    monkeypatch.setattr("claude_google_chat.chat.send_webhook", sent)
+
+    result = runner.invoke(cli.app, ["chat", "send", "--text", "hi"])
+    assert result.exit_code == 0
+    assert sent.call_args.kwargs["thread_key"] is None
+    assert "thread:" not in result.stderr
 
 
 def test_chat_send_missing_text_option_exits_nonzero(
@@ -599,6 +642,49 @@ def test_listen_space_id_override(
     assert result.exit_code == 0
     config_arg = run.call_args.args[0]
     assert config_arg.space_id == "spaces/OTHER"
+
+
+def test_listen_thread_flags_override_config_threads(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated ``--thread`` flags become the config thread filter."""
+    write_cli_config(space_id=SPACE_ID, oauth_client_file="/tmp/client.json")
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr("claude_google_chat.listener.run", run)
+    result = runner.invoke(
+        cli.app,
+        [
+            "listen",
+            "--thread",
+            "spaces/AAAA/threads/T1",
+            "--thread",
+            "spaces/AAAA/threads/T2",
+        ],
+    )
+    assert result.exit_code == 0
+    config_arg = run.call_args.args[0]
+    assert config_arg.threads == ("spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2")
+
+
+def test_listen_without_thread_flag_preserves_config_threads(
+    runner: CliRunner,
+    write_cli_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Omitting ``--thread`` keeps the configured ``threads`` value."""
+    write_cli_config(
+        space_id=SPACE_ID,
+        oauth_client_file="/tmp/client.json",
+        threads=["spaces/AAAA/threads/CFG"],
+    )
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr("claude_google_chat.listener.run", run)
+    result = runner.invoke(cli.app, ["listen"])
+    assert result.exit_code == 0
+    config_arg = run.call_args.args[0]
+    assert config_arg.threads == ("spaces/AAAA/threads/CFG",)
 
 
 # --------------------------------------------------------------------------- #
