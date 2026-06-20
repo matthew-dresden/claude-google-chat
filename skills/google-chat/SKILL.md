@@ -50,7 +50,7 @@ summary line (prefixed with a status emoji):
 ```
 
 The machine-readable JSON envelope is **not** embedded in the human Chat view by
-default. The machine channel is the JSONL emitted on `cgc listen` / `cgc serve`
+default. The machine channel is the JSONL emitted on `cgc listen`
 stdout (one envelope per line). To additionally embed the envelope in the Chat
 text, opt in with `send_envelope = true` (`CGC_SEND_ENVELOPE=true`) or
 `cgc chat send --envelope`, which yields the summary line followed by a fenced

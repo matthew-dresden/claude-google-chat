@@ -54,7 +54,7 @@ cgc chat send --status error   --text "Migration failed on step 3"
 
 `--status` is one of `info | working | success | error | blocked`. A non-2xx HTTP response causes a fail-fast non-zero exit with the status code and a redacted URL.
 
-**Clean by default.** The message posted to Chat is just the emoji-prefixed summary line (e.g. `✅ Build is green`) — the machine-readable JSON envelope is **not** embedded in the human-facing Chat view. The machine channel is the JSONL on `cgc listen` / `cgc serve` stdout. To embed the JSON envelope in the Chat text, set `send_envelope = true` (`CGC_SEND_ENVELOPE=true`) in config, or override per send:
+**Clean by default.** The message posted to Chat is just the emoji-prefixed summary line (e.g. `✅ Build is green`) — the machine-readable JSON envelope is **not** embedded in the human-facing Chat view. The machine channel is the JSONL on `cgc listen` stdout. To embed the JSON envelope in the Chat text, set `send_envelope = true` (`CGC_SEND_ENVELOPE=true`) in config, or override per send:
 
 ```bash
 cgc chat send --status success --text "Build is green" --envelope     # append the JSON envelope
@@ -89,31 +89,6 @@ Print the config file location and the keys required for each operation.
 ```bash
 cgc setup
 ```
-
-### `cgc bootstrap`
-
-Service-account (app-auth) setup that Terraform cannot do: join or create the
-Chat space, register the Workspace Events `message.created` subscription to the
-Pub/Sub topic, and merge the discovered values into `config.toml`. Requires
-`service_account_file` and `pubsub_topic`. See the [Setup Runbook](SETUP.md) for
-the full app-auth path.
-
-```bash
-cgc bootstrap
-```
-
-### `cgc serve`
-
-Run the always-listening responder, replying to owner messages as the app (service-account auth).
-
-```bash
-cgc serve                           # run forever
-cgc serve --once                    # handle pending owner messages once and exit
-cgc serve --timeout 600             # exit non-zero if idle for 600 seconds
-cgc serve --space-id spaces/AAAA    # override the configured space for this run
-```
-
-`serve` uses the same resilient poll loop as `listen`: transient backend errors are logged and skipped, fatal `401`/`403` auth errors fail fast, the `max_consecutive_errors` bound surfaces a truly-down backend, and the high-water marker is persisted to `state_file` so a restart never re-replies to recent history. `require_trigger` does not affect `serve` — it always responds only to owner trigger-prefixed messages.
 
 ### `cgc status`
 
@@ -175,7 +150,7 @@ Once installed, tab completion suggests **commands, sub-groups, options, and arg
 | `cgc chat send --status <TAB>` | `info`, `working`, `success`, `error`, `blocked`. |
 | `cgc completion <shell>` / `--shell` | `bash`, `zsh`, `fish`. |
 | `cgc auth login --client-file <TAB>` | File paths (native shell file completion). |
-| `cgc serve --space-id` / `cgc listen --space-id` | The `space_id` from your current config, if set. |
+| `cgc listen --space-id` | The `space_id` from your current config, if set. |
 | `cgc clear --trigger-prefix` | The `trigger_prefix` from your current config. |
 
 Dynamic completers never crash your shell: any error simply yields no suggestions.
@@ -302,7 +277,7 @@ claude: deploy prod --force
 
 ## Examples by kind
 
-By default the message posted into Chat is the clean summary line alone. The fenced JSON block shown under each example below is the machine-readable envelope — it is emitted on `cgc listen` / `cgc serve` stdout (JSONL), and is only embedded in the Chat text when `send_envelope` is enabled (or `cgc chat send --envelope`).
+By default the message posted into Chat is the clean summary line alone. The fenced JSON block shown under each example below is the machine-readable envelope — it is emitted on `cgc listen` stdout (JSONL), and is only embedded in the Chat text when `send_envelope` is enabled (or `cgc chat send --envelope`).
 
 **Status** (Claude → space) — clean Chat text, with the corresponding envelope:
 
@@ -329,40 +304,3 @@ claude: rerun-ci --branch main
 ```
 
 See [configuration.md](configuration.md) for tuning the trigger prefix, poll interval, and timeouts.
-
----
-
-## Phone notifications (avoid duplicate alerts)
-
-When you send status pings to a Google Chat space, that space can reach your phone through **two independent paths**:
-
-1. The **standalone Google Chat app** (the dedicated "Google Chat" mobile app), and
-2. **Gmail's built-in Chat** (Chat is also surfaced inside the Gmail mobile app).
-
-If both are installed and both have notifications enabled, every ping arrives **twice** on your phone. Pick exactly one of the options below so you get a single alert per ping.
-
-### Option A — Use the standalone Google Chat app, silence Gmail's Chat
-
-Use this if you want a dedicated Chat experience separate from email.
-
-1. Install/keep the **Google Chat** app and sign in to the same account.
-2. In the **Google Chat** app, enable notifications for the space you post pings to (open the space → notification settings → "All messages" / "Notify always", as you prefer).
-3. In the **Gmail** app, turn **off** Chat notifications so it does not double-alert:
-   - Gmail → menu → **Settings** → select the account → **Chat notifications** (or **Chat**) → set to **Off** / "None".
-   - On desktop/web: Gmail → ⚙ **See all settings** → **Chat and Meet** → turn **Chat notifications** off, or set **Chat** to "Off" entirely if you do not use Chat inside Gmail.
-
-Result: pings notify only through the standalone Google Chat app.
-
-### Option B — Use Gmail only, remove/silence the standalone app
-
-Use this if you prefer to keep everything inside Gmail and not run a second app.
-
-1. In the **Gmail** app, make sure **Chat** is enabled and Chat notifications are **on** for the space:
-   - Gmail → menu → **Settings** → select the account → **Chat notifications** → **On**, and confirm the space's per-space setting is "All messages".
-2. **Remove or silence the standalone Google Chat app** so it does not also alert:
-   - Either uninstall the **Google Chat** app, or
-   - Open the **Google Chat** app → notification settings → set notifications to **Off** for that account/space.
-
-Result: pings notify only through Gmail.
-
-> The per-space notification level (All messages / Mentions only / Off) lives **inside the space** and is shared by both surfaces, while "which app alerts me" is the **app-level** toggle above. Set the space to "All messages" so pings are delivered, then use the app-level toggles so only **one** app actually rings.

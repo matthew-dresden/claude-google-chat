@@ -1,11 +1,11 @@
-"""Unit tests for OAuth + service-account credential loading (``auth.py``).
+"""Unit tests for user-OAuth credential loading (``auth.py``).
 
 The heavy network/browser boundaries are mocked per-test: the
-``InstalledAppFlow`` installed-app flow, the OAuth ``Credentials`` user-token
-loader, and the ``service_account.Credentials`` key loader are all replaced via
-``unittest.mock`` so no Google call, browser, or real key file is required.
-Config is supplied by ``make_config`` and token/client/SA files live under
-``tmp_path``. Missing-file paths must fail fast with actionable errors.
+``InstalledAppFlow`` installed-app flow and the OAuth ``Credentials`` user-token
+loader are replaced via ``unittest.mock`` so no Google call, browser, or real
+token file is required. Config is supplied by ``make_config`` and token/client
+files live under ``tmp_path``. Missing-file paths must fail fast with actionable
+errors.
 """
 
 from __future__ import annotations
@@ -160,66 +160,3 @@ def test_login_missing_client_file(
     with pytest.raises(FileNotFoundError) as exc_info:
         auth.login(config)
     assert "client secrets" in str(exc_info.value)
-
-
-# --------------------------------------------------------------------------- #
-# load_app_credentials (service-account key).
-# --------------------------------------------------------------------------- #
-
-
-def test_load_app_credentials_uses_default_app_scopes(
-    monkeypatch: pytest.MonkeyPatch,
-    make_config: Any,
-    tmp_path: Path,
-) -> None:
-    sa = tmp_path / "sa.json"
-    sa.write_text('{"type": "service_account"}', encoding="utf-8")
-    config = make_config(service_account_file=str(sa))
-
-    creds = MagicMock()
-    factory = MagicMock(return_value=creds)
-    monkeypatch.setattr(
-        "google.oauth2.service_account.Credentials.from_service_account_file", factory
-    )
-
-    result = auth.load_app_credentials(config)
-
-    assert result is creds
-    factory.assert_called_once_with(str(sa), scopes=auth.APP_SCOPES)
-
-
-def test_load_app_credentials_honors_custom_scopes(
-    monkeypatch: pytest.MonkeyPatch,
-    make_config: Any,
-    tmp_path: Path,
-) -> None:
-    sa = tmp_path / "sa.json"
-    sa.write_text('{"type": "service_account"}', encoding="utf-8")
-    config = make_config(service_account_file=str(sa))
-    custom = ["https://www.googleapis.com/auth/chat.bot"]
-
-    factory = MagicMock(return_value=MagicMock())
-    monkeypatch.setattr(
-        "google.oauth2.service_account.Credentials.from_service_account_file", factory
-    )
-
-    auth.load_app_credentials(config, scopes=custom)
-
-    factory.assert_called_once_with(str(sa), scopes=custom)
-
-
-def test_load_app_credentials_missing_config(make_config: Any) -> None:
-    config = make_config(service_account_file=None)
-    with pytest.raises(ValueError) as exc_info:
-        auth.load_app_credentials(config)
-    assert "service_account_file" in str(exc_info.value)
-
-
-def test_load_app_credentials_missing_file(
-    make_config: Any,
-    tmp_path: Path,
-) -> None:
-    config = make_config(service_account_file=str(tmp_path / "absent.json"))
-    with pytest.raises(FileNotFoundError) as exc_info:
-        auth.load_app_credentials(config)
-    assert "service account key file" in str(exc_info.value)

@@ -4,9 +4,6 @@ Subcommands:
     config init|show|get|set  manage the user config file
     auth login                complete the OAuth installed-app flow
     chat send                 send a status ping via the webhook
-    bootstrap                 service-account setup Terraform can't do (join/create
-                              space, create Workspace Events subscription, merge config)
-    serve                     always-listening responder (app auth)
     listen                    run the inbound listener
     clear                     delete trigger messages from the space
     status                    show resolved configuration health
@@ -92,8 +89,8 @@ def _apply_overrides(
     """Return ``config`` with any non-``None`` CLI overrides applied.
 
     Centralises the "replace the field only when the flag was given" pattern
-    shared by ``serve``/``listen``/``clear`` so the override logic lives in one
-    place (DRY) instead of being repeated per command.
+    shared by ``listen``/``clear`` so the override logic lives in one place (DRY)
+    instead of being repeated per command.
     """
     if space_id is not None:
         config = replace(config, space_id=space_id)
@@ -118,9 +115,9 @@ def main(
 
     Run a command group with ``--help`` (e.g. ``cgc config --help``) to see its
     subcommands. Outbound status pings use an incoming webhook; inbound listening
-    uses OAuth or service-account credentials. All required configuration is
-    resolved from environment variables or the user config file, failing fast
-    with a clear message when a value is missing.
+    uses user OAuth credentials. All required configuration is resolved from
+    environment variables or the user config file, failing fast with a clear
+    message when a value is missing.
     """
 
 
@@ -177,8 +174,8 @@ def config_set(
     """Set a single config key, preserving existing keys.
 
     Routes through the shared ``merge_config_values`` validation (via
-    ``merge_and_write_config``) so an unknown key fails fast with the same single
-    rule used by ``cgc bootstrap``, before anything is written.
+    ``merge_and_write_config``) so an unknown key fails fast with a single
+    consistent rule, before anything is written.
     """
     try:
         written = merge_and_write_config({key: value})
@@ -266,65 +263,6 @@ def setup() -> None:
     typer.echo("required for send:  webhook_url (CGC_WEBHOOK_URL)")
     typer.echo("required for read:  space_id (CGC_SPACE_ID), oauth_client_file")
     typer.echo("use 'cgc config set <key> <value>' to populate")
-
-
-@app.command("bootstrap")
-def bootstrap() -> None:
-    """Run service-account setup that Terraform cannot do.
-
-    Joins or creates the target Chat space, registers the Google Workspace
-    Events ``message.created`` subscription to the Pub/Sub topic, and merges the
-    discovered values into ``config.toml``. Fails fast with exact instructions
-    if the manual Chat app Configuration console step is not yet done.
-    """
-    from claude_google_chat.bootstrap import (
-        ChatAppNotConfiguredError,
-        SpaceNotFoundError,
-    )
-    from claude_google_chat.bootstrap import bootstrap as run_bootstrap
-
-    config = Config.load(require=("service_account_file", "pubsub_topic"))
-    try:
-        result = run_bootstrap(config)
-    except (ChatAppNotConfiguredError, SpaceNotFoundError) as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(code=2) from exc
-
-    if result.created_space:
-        typer.echo(f"created space {result.space_id}")
-    elif result.joined_space:
-        typer.echo(f"joined space {result.space_id}")
-    else:
-        typer.echo(f"already a member of space {result.space_id}")
-    typer.echo(f"subscription: {result.subscription_name}")
-    typer.echo(f"events topic: {result.pubsub_topic}")
-    typer.echo(f"config written: {result.config_path}")
-
-
-@app.command("serve")
-def serve(
-    once: bool = typer.Option(False, "--once", help="Handle pending owner messages once and exit."),
-    timeout: float | None = typer.Option(
-        None, "--timeout", help="Idle timeout in seconds (overrides config listen_timeout)."
-    ),
-    space_id: str | None = typer.Option(
-        None,
-        "--space-id",
-        help="Chat space to serve, e.g. spaces/AAAA (overrides config space_id).",
-        autocompletion=complete_space_id,
-    ),
-) -> None:
-    """Run the always-listening responder, replying to owner messages as the app.
-
-    Polls the configured space using service-account (app) credentials and, for
-    each new owner message starting with the trigger prefix, posts a structured
-    reply via the Chat API. Exits non-zero on idle timeout (when configured).
-    """
-    from claude_google_chat.serve import run as run_serve
-
-    config = _apply_overrides(Config.load(), space_id=space_id, timeout=timeout)
-    config.require_keys(("service_account_file", "space_id"))
-    raise typer.Exit(code=run_serve(config, once=once))
 
 
 @app.command("listen")

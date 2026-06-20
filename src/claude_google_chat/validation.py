@@ -3,8 +3,8 @@
 Single source of truth for the format checks that more than one module needs:
 the Chat space resource id and the RFC3339 ``createTime`` lower bound used in
 Chat API list filters. Keeping these here avoids duplicated regexes and error
-strings drifting across ``chat.py`` and ``bootstrap.py`` (DRY), and lets a
-malformed value fail fast with one consistent, actionable message.
+strings drifting across the callers (DRY), and lets a malformed value fail fast
+with one consistent, actionable message.
 """
 
 from __future__ import annotations

@@ -32,14 +32,14 @@
 
 ---
 
-## Two ways to run this
+## How it works
 
-There are two authentication paths; pick the one that matches your use case:
+A single, session-bound path drives the whole integration:
 
-1. **Quickstart path — webhook + user OAuth.** Outbound status pings go through an **incoming webhook** (no auth for send-only); inbound reading uses **user OAuth** credentials. Driven by `cgc chat send` and `cgc listen`. Start with the [Quickstart](#quickstart) below and [Installation](docs/installation.md).
-2. **App-auth path — service account.** The bot posts and reads as the **Chat app** itself, authenticated by a **service account**. Infrastructure is provisioned with Terraform, wired up by `cgc bootstrap`, and run with `cgc serve` — no user OAuth and no webhooks. The **[Setup Runbook](docs/SETUP.md)** is the canonical guide for this path.
+- **Outbound status pings** go through a Google Chat **incoming webhook** (no auth for send-only), driven by `cgc chat send`.
+- **Inbound commands** are read from the space via the **Google Chat REST API** using your **user OAuth** credentials, surfaced by `cgc listen`.
 
-The two paths share the same CLI, config, and structured message format. The quickstart path is the fastest way to send a ping; the app-auth path is the full two-way integration.
+One CLI, one config, one structured message format in both directions. Start with the [Quickstart](#quickstart) below and [Installation](docs/installation.md).
 
 ---
 
@@ -54,17 +54,6 @@ When Claude Code runs long or autonomous tasks, you need a way to (a) see what i
 - The same envelope is used in both directions, so machines and people read the same source of truth.
 
 Send-only operation needs nothing but an incoming webhook URL. Reading inbound commands uses OAuth user credentials scoped to Chat messages. No hardcoded secrets — everything comes from environment variables or a user config file.
-
----
-
-## Setup
-
-> **Standing it up from scratch?** Follow the **[Setup Runbook](docs/SETUP.md)** —
-> a brain-dead-simple, fully numbered, zero-to-working guide for the
-> service-account (app-auth) design. Every step is marked
-> **[AUTOMATED: terraform]**, **[AUTOMATED: cgc]**, or **[MANUAL: you]** with the
-> exact command or console clicks, including the one irreducible manual step
-> (the Google Chat API Configuration page) and `terraform destroy` teardown.
 
 ---
 
@@ -157,15 +146,15 @@ The user config file lives in your OS config directory (resolved via `platformdi
 | **`token_file`**<br>`CGC_TOKEN_FILE` | Cached OAuth user token (path). Optional · default `<config_dir>/token.json`. |
 | **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude:`. |
 | **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
-| **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener/responder idle timeout, seconds (float); governs `listen` and `serve`. Optional · default `0` (run forever). |
+| **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener idle timeout, seconds (float); governs `listen`. Optional · default `0` (run forever). |
 | **`send_envelope`**<br>`CGC_SEND_ENVELOPE` | Append the machine-readable JSON envelope to outbound Chat text. Optional · default `false` (clean human-facing summary only). |
-| **`max_consecutive_errors`**<br>`CGC_MAX_CONSECUTIVE_ERRORS` | Consecutive transient poll failures (`listen`/`serve`) tolerated before the loop fails fast with a non-zero exit. The counter resets on any successful poll (int). Optional · default `10`. |
-| **`state_file`**<br>`CGC_STATE_FILE` | Durable high-water state path for `listen`/`serve`. Records the last-processed message time so a restart resumes instead of re-emitting recent history (written `0600`). Optional · default `<config_dir>/listen-state.json`. |
+| **`max_consecutive_errors`**<br>`CGC_MAX_CONSECUTIVE_ERRORS` | Consecutive transient poll failures (`listen`) tolerated before the loop fails fast with a non-zero exit. The counter resets on any successful poll (int). Optional · default `10`. |
+| **`state_file`**<br>`CGC_STATE_FILE` | Durable high-water state path for `listen`. Records the last-processed message time so a restart resumes instead of re-emitting recent history (written `0600`). Optional · default `<config_dir>/listen-state.json`. |
 | **`require_trigger`**<br>`CGC_REQUIRE_TRIGGER` | When `true` (default), `listen` emits only messages starting with `trigger_prefix`. When `false`, `listen` surfaces **every** message from a HUMAN sender (bots/own posts always excluded) — trigger-prefixed lines still parse as commands; plain lines are surfaced as a message carrying the full text. Boolean. Optional · default `true`. |
 
 Secrets are never echoed: `cgc config show` masks the webhook token and token-file contents. See [docs/configuration.md](docs/configuration.md) for details.
 
-**Human vs. machine views.** By default outbound Chat messages (`cgc chat send` and `cgc serve` replies) are the clean, emoji-prefixed summary line alone — the JSON envelope is **not** posted into the human-facing Chat view. The machine-readable channel is the JSONL written to stdout by `cgc listen` / `cgc serve` (one envelope per line). To additionally embed the JSON envelope in the Chat text, opt in with `send_envelope = true` (or `CGC_SEND_ENVELOPE=true`), or per send with `cgc chat send --envelope`.
+**Human vs. machine views.** By default outbound Chat messages (`cgc chat send`) are the clean, emoji-prefixed summary line alone — the JSON envelope is **not** posted into the human-facing Chat view. The machine-readable channel is the JSONL written to stdout by `cgc listen` (one envelope per line). To additionally embed the JSON envelope in the Chat text, opt in with `send_envelope = true` (or `CGC_SEND_ENVELOPE=true`), or per send with `cgc chat send --envelope`.
 
 ---
 
@@ -220,23 +209,23 @@ The CLI exposes message management through the Chat API (used by the listener an
 - `messages.py` — pure, I/O-free structured message envelope (`format_message` / `parse_message` / `to_jsonl`); single source of truth for the protocol.
 - `validation.py` — pure shared format validators (`validate_space_id`, `validate_create_time`).
 - `config.py` — single config authority; merges file + env, validates, fails fast on missing required values.
-- `auth.py` — Google user OAuth (InstalledAppFlow) for read/listen and service-account (app) auth for bootstrap/serve; never logs tokens or key material.
-- `chat.py` — webhook send + Chat API list/delete (user OAuth) and post/list as the app (service account).
-- `polling.py` — shared poll primitive (dedup, high-water tracking, idle-timeout loop, JSON-line emit) used by `listener.py` and `serve.py`.
+- `auth.py` — Google user OAuth (InstalledAppFlow) for read/listen; never logs token material.
+- `chat.py` — webhook send + Chat API list/delete (user OAuth).
+- `polling.py` — shared poll primitive (dedup, high-water tracking, idle-timeout loop, JSON-line emit) used by `listener.py`.
+- `rawmessage.py` — pure accessors for raw Chat `messages.list` resources (HUMAN/BOT sender gating for loop prevention).
+- `resilience.py` — transient-vs-fatal poll-error classification.
+- `state.py` — durable high-water `StateStore` so a restart resumes instead of re-emitting.
 - `listener.py` — event/poll-driven listener with env-driven cadence and idle timeout (no `sleep` as a readiness primitive).
-- `bootstrap.py` — service-account setup Terraform can't do (join/create space, register the Workspace Events subscription, merge config).
-- `serve.py` — always-listening responder that replies to owner messages as the app.
-- `cli.py` — Typer app exposing `cgc` (`config init|show|get|set`, `auth login`, `chat send`, `bootstrap`, `serve`, `listen`, `clear`, `status`, `setup`, `completion`).
+- `cli.py` — Typer app exposing `cgc` (`config init|show|get|set`, `auth login`, `chat send`, `listen`, `clear`, `status`, `setup`, `completion`).
 - `__main__.py` — `python -m claude_google_chat` entry point.
 
-Data flow: Claude Code → `/claude-google-chat:*` command → `cgc` CLI → Google Chat (incoming webhook or Chat REST API for the quickstart path; Chat REST API as the service account for the app-auth path). See [docs/architecture.md](docs/architecture.md) for the full breakdown and diagram.
+Data flow: Claude Code → `/claude-google-chat:*` command → `cgc` CLI → Google Chat (incoming webhook for outbound sends; Chat REST API with user OAuth for inbound reads). See [docs/architecture.md](docs/architecture.md) for the full breakdown and diagram.
 
 ---
 
 ## Documentation
 
-- [Setup Runbook](docs/SETUP.md) — **canonical app-auth guide:** numbered zero-to-working runbook (terraform + `cgc bootstrap`/`serve` + the one manual console step), with a what's-automated-vs-manual table and teardown.
-- [Installation](docs/installation.md) — both install paths plus Google Cloud setup.
+- [Installation](docs/installation.md) — install paths plus Google Cloud setup (OAuth client + incoming webhook).
 - [Usage](docs/usage.md) — command reference, listener behavior, message examples.
 - [Configuration](docs/configuration.md) — full config table, precedence, secret handling.
 - [Shell completion](docs/SHELL_COMPLETION.md) — bash/zsh tab completion: auto-updating and static-file installs, prerequisites.

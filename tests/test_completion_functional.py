@@ -282,7 +282,7 @@ def env_with_config(config_home: Path) -> dict[str, str]:
     (cfg_dir / "config.toml").write_text(
         'space_id = "spaces/FUNCTIONAL"\n'
         'trigger_prefix = "ops-command:"\n'
-        'project_id = "proj-func"\n',
+        'webhook_url = "https://hook/func"\n',
         encoding="utf-8",
     )
     return _base_env(config_home)
@@ -333,7 +333,7 @@ def _drive(shell: str, comp_line: str, env: Mapping[str, str]) -> CompletionResu
 
 # Top-level commands a fresh ``cgc <TAB>`` must offer (subset asserted so the
 # test does not over-specify ordering or future additions).
-_EXPECTED_TOP_LEVEL = {"config", "auth", "chat", "serve", "listen", "clear", "completion"}
+_EXPECTED_TOP_LEVEL = {"config", "auth", "chat", "listen", "clear", "completion"}
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)
@@ -404,27 +404,25 @@ def test_auth_login_client_file_does_not_crash(shell: str, env_no_config: dict[s
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)
-@pytest.mark.parametrize("command", ["serve", "listen"])
 def test_space_id_completion_clean_without_config(
-    shell: str, command: str, env_no_config: dict[str, str]
+    shell: str, env_no_config: dict[str, str]
 ) -> None:
-    """``cgc {serve,listen} --space-id <TAB>`` is clean with NO config file.
+    """``cgc listen --space-id <TAB>`` is clean with NO config file.
 
     This is the canonical artifact source: a config-derived completer firing
     when no config exists. It must produce no suggestions and no diagnostics.
     """
-    result = _drive(shell, f"cgc {command} --space-id ", env_no_config)
-    _assert_clean(result, context=f"{shell}: cgc {command} --space-id <TAB> (no config)")
+    result = _drive(shell, "cgc listen --space-id ", env_no_config)
+    _assert_clean(result, context=f"{shell}: cgc listen --space-id <TAB> (no config)")
 
 
 @pytest.mark.parametrize("shell", _SHELL_PARAMS)
-@pytest.mark.parametrize("command", ["serve", "listen"])
 def test_space_id_completion_offers_configured_value(
-    shell: str, command: str, env_with_config: dict[str, str]
+    shell: str, env_with_config: dict[str, str]
 ) -> None:
     """With a config file, ``--space-id <TAB>`` offers the configured space id."""
-    result = _drive(shell, f"cgc {command} --space-id ", env_with_config)
-    _assert_clean(result, context=f"{shell}: cgc {command} --space-id <TAB> (with config)")
+    result = _drive(shell, "cgc listen --space-id ", env_with_config)
+    _assert_clean(result, context=f"{shell}: cgc listen --space-id <TAB> (with config)")
     assert "spaces/FUNCTIONAL" in result.values, result.values
 
 
@@ -446,7 +444,6 @@ def test_trigger_prefix_completion_clean(shell: str, env_with_config: dict[str, 
     "comp_line",
     [
         "cgc ",
-        "cgc serve --space-id ",
         "cgc listen --space-id ",
         "cgc clear --trigger-prefix ",
         "cgc config set ",
@@ -471,7 +468,7 @@ def test_space_id_completion_with_env_override_set(
     """
     env = dict(env_no_config)
     env[ENV_OVERRIDES["space_id"]] = "spaces/FROM_ENV"
-    result = _drive(shell, "cgc serve --space-id ", env)
+    result = _drive(shell, "cgc listen --space-id ", env)
     _assert_clean(result, context=f"{shell}: --space-id <TAB> (env override set)")
     assert "spaces/FROM_ENV" in result.values, result.values
 
@@ -484,7 +481,7 @@ def test_completion_clean_with_all_env_overrides_unset(
     env = dict(env_no_config)
     for env_var in ENV_OVERRIDES.values():
         env.pop(env_var, None)
-    result = _drive(shell, "cgc serve --space-id ", env)
+    result = _drive(shell, "cgc listen --space-id ", env)
     _assert_clean(result, context=f"{shell}: --space-id <TAB> (all env unset)")
 
 

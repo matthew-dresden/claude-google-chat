@@ -81,7 +81,7 @@ def test_complete_config_key_returns_all_known_keys() -> None:
 def test_complete_config_key_prefix_filters() -> None:
     items = completion.complete_config_key("space_")
     values = [item[0] if isinstance(item, tuple) else item for item in items]
-    assert values == ["space_display_name", "space_id"]
+    assert values == ["space_id"]
 
 
 def test_complete_config_key_includes_env_hint() -> None:

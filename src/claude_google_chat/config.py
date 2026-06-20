@@ -52,15 +52,9 @@ ENV_OVERRIDES: dict[str, str] = {
     "max_consecutive_errors": "CGC_MAX_CONSECUTIVE_ERRORS",
     "state_file": "CGC_STATE_FILE",
     "require_trigger": "CGC_REQUIRE_TRIGGER",
-    # Service-account (app) auth + Workspace Events bootstrap.
-    "service_account_file": "CGC_SERVICE_ACCOUNT_FILE",
-    "project_id": "CGC_PROJECT_ID",
-    "pubsub_topic": "CGC_PUBSUB_TOPIC",
-    "space_display_name": "CGC_SPACE_DISPLAY_NAME",
-    "owner_email": "CGC_OWNER_EMAIL",
 }
 
-_SECRET_KEYS: frozenset[str] = frozenset({"webhook_url", "token_file", "service_account_file"})
+_SECRET_KEYS: frozenset[str] = frozenset({"webhook_url", "token_file"})
 
 
 def config_dir() -> Path:
@@ -137,11 +131,6 @@ class Config:
     max_consecutive_errors: int = DEFAULT_MAX_CONSECUTIVE_ERRORS
     state_file: str | None = None
     require_trigger: bool = DEFAULT_REQUIRE_TRIGGER
-    service_account_file: str | None = None
-    project_id: str | None = None
-    pubsub_topic: str | None = None
-    space_display_name: str | None = None
-    owner_email: str | None = None
 
     @classmethod
     def load(
@@ -231,11 +220,6 @@ class Config:
                 if "require_trigger" in merged
                 else DEFAULT_REQUIRE_TRIGGER
             ),
-            service_account_file=_opt_str("service_account_file"),
-            project_id=_opt_str("project_id"),
-            pubsub_topic=_opt_str("pubsub_topic"),
-            space_display_name=_opt_str("space_display_name"),
-            owner_email=_opt_str("owner_email"),
         )
         config.require_keys(require)
         return config
@@ -291,8 +275,8 @@ def merge_config_values(
     that does not know a value leaves any prior value intact. Every resulting
     key must be a known config key (validated against :data:`ENV_OVERRIDES`),
     failing fast on an unknown key. This is the single, testable merge rule used
-    by ``cgc bootstrap`` so partial re-runs are idempotent and never drop
-    previously-stored settings.
+    by ``cgc config set`` so partial updates never drop previously-stored
+    settings.
     """
     valid = set(ENV_OVERRIDES)
     merged: dict[str, object] = {}
@@ -338,9 +322,9 @@ def merge_and_write_config(
 ) -> Path:
     """Read the existing config (if any), merge ``updates``, and persist it.
 
-    Returns the path written. Used by ``cgc bootstrap`` to merge discovered
-    values (space id, topic) into ``config.toml`` without clobbering values the
-    user set earlier (e.g. ``trigger_prefix``).
+    Returns the path written. Used by ``cgc config set`` to merge a single key
+    into ``config.toml`` without clobbering values the user set earlier (e.g.
+    ``trigger_prefix``).
     """
     file_path = default_config_path() if path is None else path
     existing: dict[str, object] = {}

@@ -15,20 +15,9 @@ from claude_google_chat.config import Config
 
 if TYPE_CHECKING:
     from google.oauth2.credentials import Credentials
-    from google.oauth2.service_account import Credentials as ServiceAccountCredentials
 
 # Read + send scope; send happens via webhook but the scope covers API reads.
 CHAT_SCOPES: list[str] = ["https://www.googleapis.com/auth/chat.messages"]
-
-# App (service-account) scopes used by 'cgc bootstrap' and 'cgc serve'.
-# The bot app reads/posts messages, manages its space memberships, creates
-# spaces, and registers Google Workspace Events subscriptions.
-APP_SCOPES: list[str] = [
-    "https://www.googleapis.com/auth/chat.bot",
-    "https://www.googleapis.com/auth/chat.messages",
-    "https://www.googleapis.com/auth/chat.spaces",
-    "https://www.googleapis.com/auth/chat.memberships",
-]
 
 
 def _require_client_file(config: Config) -> Path:
@@ -103,36 +92,3 @@ def _write_token(token_path: Path, creds: Credentials) -> None:
     token_path.parent.mkdir(parents=True, exist_ok=True)
     token_path.write_text(creds.to_json(), encoding="utf-8")
     os.chmod(token_path, 0o600)
-
-
-def _require_service_account_file(config: Config) -> Path:
-    """Return the service-account key path, raising if absent or missing.
-
-    Uses :meth:`Config.require_keys` for the missing-value message so the
-    "set <ENV> or add it to config.toml" hint is generated in one place.
-    """
-    config.require_keys(("service_account_file",))
-    assert config.service_account_file is not None  # require_keys guarantees non-empty
-    sa_path = Path(config.service_account_file)
-    if not sa_path.exists():
-        raise FileNotFoundError(f"service account key file not found: {sa_path}")
-    return sa_path
-
-
-def load_app_credentials(
-    config: Config,
-    scopes: list[str] | None = None,
-) -> ServiceAccountCredentials:
-    """Load Google **service-account** (app) credentials for the Chat app.
-
-    This is the app-auth path (NOT user OAuth): ``cgc bootstrap`` and
-    ``cgc serve`` act as the Chat app itself. Fails fast with an actionable
-    message if the service-account key file is missing. Never logs key material.
-    """
-    from google.oauth2 import service_account
-
-    sa_path = _require_service_account_file(config)
-    resolved_scopes = APP_SCOPES if scopes is None else scopes
-    return service_account.Credentials.from_service_account_file(
-        str(sa_path), scopes=resolved_scopes
-    )

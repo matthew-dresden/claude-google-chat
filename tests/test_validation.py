@@ -1,8 +1,8 @@
 """Unit tests for :mod:`claude_google_chat.validation`.
 
 The module is pure (no I/O) and is the single source of truth for the space-id
-and RFC3339 ``createTime`` format checks shared by ``chat.py`` and
-``bootstrap.py``. These exercise both the accept and the fail-fast reject paths.
+and RFC3339 ``createTime`` format checks used by ``chat.py``. These exercise both
+the accept and the fail-fast reject paths.
 """
 
 from __future__ import annotations

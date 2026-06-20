@@ -2,15 +2,12 @@
 
 Each test reads as a human-like scenario: a person configures the tool, a
 teammate posts a message, the operator runs ``cgc``. We drive the real Typer CLI
-(via ``CliRunner``) and the public ``serve``/``bootstrap`` entry points, with only
-the genuine external boundaries faked:
+(via ``CliRunner``) and the public ``listen`` entry point, with only the genuine
+external boundaries faked:
 
 - incoming-webhook HTTP (the ``responses`` fixture ``mocked_webhook``);
 - the Google Chat REST API (``FakeChatService``, injected by monkeypatching the
-  ``build_app_service`` discovery boundary so no network/discovery call is made);
-- Google service-account credential loading (monkeypatched, the heavy auth
-  boundary), since the CLI ``serve``/``bootstrap`` commands require it before the
-  faked service is reached.
+  ``chat.list_messages`` transport so no network/discovery call is made).
 
 Config is supplied the supported way: environment variables (``CGC_*``) read by
 ``Config.load``, so no real OS config directory is touched.
@@ -24,13 +21,10 @@ import pytest
 import responses as responses_lib
 from typer.testing import CliRunner
 
-import claude_google_chat.chat as chat_module
-from claude_google_chat.bootstrap import ChatAppNotConfiguredError
-from claude_google_chat.bootstrap import bootstrap as run_bootstrap
 from claude_google_chat.cli import app
 from claude_google_chat.config import Config
+from claude_google_chat.listener import run as run_listen
 from claude_google_chat.messages import DEFAULT_TRIGGER_PREFIX, STATUS_EMOJI
-from claude_google_chat.serve import run as run_serve
 
 runner = CliRunner()
 
@@ -63,15 +57,6 @@ def _cli_env(**overrides: str) -> dict[str, str]:
     none exists under the isolated, non-existent default path).
     """
     return dict(overrides)
-
-
-def _http_error(status: int, message: str) -> Exception:
-    """Build a googleapiclient ``HttpError`` as the real Chat API would raise."""
-    from googleapiclient.errors import HttpError
-
-    resp = type("Resp", (), {"status": status, "reason": "Error"})()
-    content = json.dumps({"error": {"message": message}}).encode("utf-8")
-    return HttpError(resp, content, uri="https://chat.googleapis.com/v1/...")
 
 
 # --------------------------------------------------------------------------- #
@@ -141,190 +126,49 @@ def test_journey_status_ping_without_webhook_fails_fast() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Journey 2: Inbound command -> serve loop picks it up -> structured reply posted.
+# Journey 2: Inbound command -> listener emits it once; a plain line is skipped.
 # --------------------------------------------------------------------------- #
 
 
-def test_journey_inbound_command_gets_structured_reply(
+def test_journey_listen_emits_trigger_and_skips_plain(
     monkeypatch,
-    fake_chat_service,
     human_trigger_message,
-    tmp_path,
-) -> None:
-    """A teammate posts 'claude: status'; ``cgc serve --once`` replies.
-
-    The Chat API is faked and injected at the discovery boundary; the serve loop
-    fetches the message, recognises the owner trigger, and posts a structured
-    'result' reply back to the space. ``send_envelope=True`` is set so the
-    posted Chat text carries the machine-readable JSON envelope this journey
-    asserts on (the clean-summary default is covered by the unit/chat tests).
-    """
-    # The owner posts a recognised trigger command.
-    inbound = dict(human_trigger_message)
-    inbound["text"] = f"{DEFAULT_TRIGGER_PREFIX} status"
-    inbound["sender"] = {"type": "HUMAN", "email": "owner@example.com"}
-    fake_chat_service.list_pages = [{"messages": [inbound]}]
-
-    # Fake the heavy boundaries: service-account creds + discovery build.
-    monkeypatch.setattr(chat_module, "load_app_credentials", lambda config: object())
-    monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
-
-    config = Config(
-        service_account_file="/tmp/sa.json",
-        space_id="spaces/AAAA",
-        owner_email="owner@example.com",
-        trigger_prefix=DEFAULT_TRIGGER_PREFIX,
-        send_envelope=True,
-        state_file=str(tmp_path / "state.json"),
-    )
-
-    exit_code = run_serve(config, once=True)
-
-    assert exit_code == 0
-    assert len(fake_chat_service.create_calls) == 1
-    posted_text = fake_chat_service.create_calls[0]["body"]["text"]
-    envelope = json.loads(posted_text.split("```")[1])
-    assert envelope["kind"] == "result"
-    assert envelope["status"] == "success"
-    assert "status" in envelope["text"]
-
-
-# --------------------------------------------------------------------------- #
-# Journey 3: Plain (no-prefix) message -> used as context, NOT executed.
-# --------------------------------------------------------------------------- #
-
-
-def test_journey_plain_message_is_not_executed(
-    monkeypatch,
-    fake_chat_service,
     human_plain_message,
+    frozen_clock,
+    capsys,
     tmp_path,
 ) -> None:
-    """A plain chat line (no trigger prefix) produces no command side effects."""
-    fake_chat_service.list_pages = [{"messages": [human_plain_message]}]
+    """A teammate posts 'claude: deploy prod'; ``cgc listen --once`` emits it.
 
-    monkeypatch.setattr(chat_module, "load_app_credentials", lambda config: object())
-    monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
+    The Chat REST transport is faked at ``chat.list_messages`` and returns a
+    trigger-prefixed message alongside a plain (non-trigger) line. The listener
+    surfaces only the structured command as one JSON line and exits 0; the plain
+    line is context only and never emitted.
+    """
+    monkeypatch.setattr(
+        "claude_google_chat.listener.list_messages",
+        lambda config, since=None: [human_trigger_message, human_plain_message],
+    )
 
     config = Config(
-        service_account_file="/tmp/sa.json",
         space_id="spaces/AAAA",
-        owner_email="owner@example.com",
         trigger_prefix=DEFAULT_TRIGGER_PREFIX,
         state_file=str(tmp_path / "state.json"),
     )
 
-    exit_code = run_serve(config, once=True)
+    exit_code = run_listen(config, once=True)
 
     assert exit_code == 0
-    # No reply was posted: the plain message is context only, never a command.
-    assert fake_chat_service.create_calls == []
+    out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert len(out_lines) == 1
+    record = json.loads(out_lines[0])
+    assert record["kind"] == "command"
+    assert record["command"] == "deploy"
+    assert record["args"] == ["prod"]
 
 
 # --------------------------------------------------------------------------- #
-# Journey 4: Bootstrap before the Chat app is configured -> exact gate message.
-# --------------------------------------------------------------------------- #
-
-
-def test_journey_bootstrap_before_app_configured_hits_gate(
-    monkeypatch,
-    fake_chat_service,
-) -> None:
-    """Bootstrapping before the manual Chat-app Configuration step is done.
-
-    The Chat API rejects the membership call with PERMISSION_DENIED; the journey
-    ends with the exact actionable gate instructions, not a raw stack trace.
-    """
-    fake_chat_service.member_create_error = _http_error(403, "PERMISSION_DENIED")
-
-    monkeypatch.setattr(chat_module, "load_app_credentials", lambda config, scopes=None: object())
-    monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
-
-    config = Config(
-        service_account_file="/tmp/sa.json",
-        space_id="spaces/AAAA",
-        project_id="test-project",
-        pubsub_topic="chat-events",
-    )
-
-    with pytest.raises(ChatAppNotConfiguredError) as exc_info:
-        run_bootstrap(config)
-
-    message = str(exc_info.value)
-    assert "The Google Chat app is not configured yet" in message
-    assert "cgc bootstrap" in message
-    assert "App status: LIVE" in message
-    assert "test-project" in message  # console URL carries the project id
-    # It never reached the events-subscription / config-write steps.
-    assert fake_chat_service.space_create_calls == []
-
-
-def test_journey_bootstrap_gate_via_cli_exits_two(
-    monkeypatch,
-    fake_chat_service,
-    tmp_path,
-) -> None:
-    """The same gate surfaced through ``cgc bootstrap`` exits 2 with instructions."""
-    fake_chat_service.member_create_error = _http_error(403, "PERMISSION_DENIED")
-    monkeypatch.setattr(chat_module, "load_app_credentials", lambda config, scopes=None: object())
-    monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
-
-    # A real (empty) SA file so Config.require_keys passes; auth itself is faked.
-    sa_file = tmp_path / "sa.json"
-    sa_file.write_text("{}", encoding="utf-8")
-
-    result = runner.invoke(
-        app,
-        ["bootstrap"],
-        env=_cli_env(
-            CGC_SERVICE_ACCOUNT_FILE=str(sa_file),
-            CGC_SPACE_ID="spaces/AAAA",
-            CGC_PROJECT_ID="test-project",
-            CGC_PUBSUB_TOPIC="chat-events",
-        ),
-    )
-
-    assert result.exit_code == 2
-    assert "not configured yet" in result.output
-
-
-def test_journey_bootstrap_mistyped_space_id_exits_two_with_space_not_found(
-    monkeypatch,
-    fake_chat_service,
-    tmp_path,
-) -> None:
-    """A configured-but-nonexistent space id (typo) gets the accurate remediation.
-
-    A 404 on the membership call is space-not-found, not the configuration gate,
-    so ``cgc bootstrap`` exits 2 with a "space not found" message rather than the
-    long "configure your Chat app" instructions.
-    """
-    fake_chat_service.member_create_error = _http_error(404, "NOT_FOUND")
-    monkeypatch.setattr(chat_module, "load_app_credentials", lambda config, scopes=None: object())
-    monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
-
-    sa_file = tmp_path / "sa.json"
-    sa_file.write_text("{}", encoding="utf-8")
-
-    result = runner.invoke(
-        app,
-        ["bootstrap"],
-        env=_cli_env(
-            CGC_SERVICE_ACCOUNT_FILE=str(sa_file),
-            CGC_SPACE_ID="spaces/ZZZZ",
-            CGC_PROJECT_ID="test-project",
-            CGC_PUBSUB_TOPIC="chat-events",
-        ),
-    )
-
-    assert result.exit_code == 2
-    assert "not found" in result.output.lower()
-    assert "spaces/ZZZZ" in result.output
-    assert "not configured yet" not in result.output
-
-
-# --------------------------------------------------------------------------- #
-# Journey 5: Multiple inbound messages -> processed once each (dedup), since kept.
+# Journey 3: Multiple inbound messages -> processed once each (dedup), since kept.
 # --------------------------------------------------------------------------- #
 
 
@@ -332,55 +176,48 @@ def test_journey_multiple_messages_dedup_and_lastseen(
     monkeypatch,
     fake_chat_service,
     make_raw_message,
+    frozen_clock,
 ) -> None:
     """Several inbound triggers are each handled exactly once across polls.
 
-    Two distinct owner commands arrive on the first poll; the newest createTime
-    becomes the ``since`` filter so a re-poll of the same page does not re-handle
-    them (dedup by message name) and the last-seen timestamp is persisted.
+    Two distinct commands arrive on the first poll; the newest createTime becomes
+    the ``since`` filter so a re-poll of the same page does not re-emit them
+    (dedup by message name). The real ``chat.list_messages`` request building /
+    pagination runs against the injected fake service.
     """
     first = make_raw_message(
         name="spaces/AAAA/messages/m1",
         text=f"{DEFAULT_TRIGGER_PREFIX} build",
-        email="owner@example.com",
         create_time="2026-06-20T00:00:01Z",
         thread=None,
     )
     second = make_raw_message(
         name="spaces/AAAA/messages/m2",
         text=f"{DEFAULT_TRIGGER_PREFIX} deploy",
-        email="owner@example.com",
         create_time="2026-06-20T00:00:05Z",
         thread=None,
     )
     fake_chat_service.list_pages = [{"messages": [first, second]}]
 
-    monkeypatch.setattr(chat_module, "load_app_credentials", lambda config: object())
-    monkeypatch.setattr(chat_module, "build_app_service", lambda config: fake_chat_service)
+    import claude_google_chat.chat as chat_module
+
+    monkeypatch.setattr(chat_module, "_build_service", lambda config: fake_chat_service)
+
+    from claude_google_chat.listener import Listener
 
     config = Config(
-        service_account_file="/tmp/sa.json",
         space_id="spaces/AAAA",
-        owner_email="owner@example.com",
         trigger_prefix=DEFAULT_TRIGGER_PREFIX,
     )
+    listener = Listener(config)
 
-    from claude_google_chat.serve import Responder
+    first_batch = list(listener.iter_new_messages(once=True))
+    assert [m.command for m in first_batch] == ["build", "deploy"]
 
-    responder = Responder(config)
-
-    first_batch = responder.run(once=True)
-    assert len(first_batch) == 2
-    assert len(fake_chat_service.create_calls) == 2
-
-    # The last-seen (since) is the newest createTime.
-    assert responder._since == "2026-06-20T00:00:05Z"
-
-    # Re-poll the identical page: dedup by message name => nothing re-handled.
+    # Re-poll the identical page: dedup by message name => nothing re-emitted.
     fake_chat_service._page_cursor = 0
-    second_batch = responder.run(once=True)
+    second_batch = list(listener.iter_new_messages(once=True))
     assert second_batch == []
-    assert len(fake_chat_service.create_calls) == 2
 
     # The re-poll sent the since filter so the API would only return newer ones.
     last_list = fake_chat_service.list_calls[-1]
@@ -388,7 +225,7 @@ def test_journey_multiple_messages_dedup_and_lastseen(
 
 
 # --------------------------------------------------------------------------- #
-# Journey 6: Webhook failure (HTTP 500) -> graceful error, no crash.
+# Journey 4: Webhook failure (HTTP 500) -> graceful error, no crash.
 # --------------------------------------------------------------------------- #
 
 

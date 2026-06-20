@@ -9,9 +9,9 @@ Google API, OAuth, or real OS-config-dir I/O occurs:
   ``config init|set``, ``setup`` and ``Config.load`` never touch the real config
   directory.
 - The lazily-imported workers (``auth.login``, ``chat.send_webhook``,
-  ``listener.run``, ``serve.run``, ``bootstrap.bootstrap``,
-  ``chat.list_messages`` / ``chat.delete_message``) are patched so each command
-  test asserts on the call it delegates and the exit code it surfaces.
+  ``listener.run``, ``chat.list_messages`` / ``chat.delete_message``) are patched
+  so each command test asserts on the call it delegates and the exit code it
+  surfaces.
 
 Assertions check exit codes, emitted output, and the arguments forwarded to the
 mocked workers; bad-input and error paths assert non-zero exit codes.
@@ -22,14 +22,12 @@ from __future__ import annotations
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from typer.testing import CliRunner
 
 from claude_google_chat import __version__, cli
-from claude_google_chat.bootstrap import BootstrapResult, ChatAppNotConfiguredError
 from claude_google_chat.messages import DEFAULT_TRIGGER_PREFIX, ChatMessage
 
 WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=TEST_KEY&token=TEST_TOKEN"
@@ -104,7 +102,7 @@ def test_version_flag_prints_version_and_exits_zero(runner: CliRunner) -> None:
 def test_help_lists_subcommands(runner: CliRunner) -> None:
     result = runner.invoke(cli.app, ["--help"])
     assert result.exit_code == 0
-    for command in ("config", "auth", "chat", "bootstrap", "serve", "listen", "status"):
+    for command in ("config", "auth", "chat", "listen", "clear", "status"):
         assert command in result.stdout
 
 
@@ -419,154 +417,6 @@ def test_listen_bad_timeout_value_exits_nonzero(
 
 
 # --------------------------------------------------------------------------- #
-# serve.
-# --------------------------------------------------------------------------- #
-
-
-def test_serve_runs_and_returns_exit_code(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", space_id=SPACE_ID)
-    run = MagicMock(return_value=0)
-    monkeypatch.setattr("claude_google_chat.serve.run", run)
-
-    result = runner.invoke(cli.app, ["serve", "--once"])
-    assert result.exit_code == 0
-    run.assert_called_once()
-    assert run.call_args.kwargs["once"] is True
-
-
-def test_serve_propagates_timeout_exit_code(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", space_id=SPACE_ID)
-    monkeypatch.setattr("claude_google_chat.serve.run", MagicMock(return_value=1))
-    result = runner.invoke(cli.app, ["serve"])
-    assert result.exit_code == 1
-
-
-def test_serve_timeout_override_replaces_config(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", space_id=SPACE_ID)
-    run = MagicMock(return_value=0)
-    monkeypatch.setattr("claude_google_chat.serve.run", run)
-
-    result = runner.invoke(cli.app, ["serve", "--timeout", "7.5"])
-    assert result.exit_code == 0
-    config_arg = run.call_args.args[0]
-    assert config_arg.listen_timeout == 7.5
-
-
-def test_serve_missing_config_fails_fast(
-    runner: CliRunner,
-    cli_config_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run = MagicMock(return_value=0)
-    monkeypatch.setattr("claude_google_chat.serve.run", run)
-    result = runner.invoke(cli.app, ["serve"])
-    assert result.exit_code != 0
-    assert isinstance(result.exception, ValueError)
-    run.assert_not_called()
-
-
-# --------------------------------------------------------------------------- #
-# bootstrap.
-# --------------------------------------------------------------------------- #
-
-
-def _bootstrap_result(**overrides: Any) -> BootstrapResult:
-    base: dict[str, Any] = {
-        "space_id": SPACE_ID,
-        "created_space": False,
-        "joined_space": True,
-        "subscription_name": "subscriptions/sub-1",
-        "pubsub_topic": "projects/p/topics/t",
-        "config_path": "/tmp/cgc/config.toml",
-    }
-    base.update(overrides)
-    return BootstrapResult(**base)
-
-
-def test_bootstrap_reports_joined_space(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", pubsub_topic="projects/p/topics/t")
-    boot = MagicMock(return_value=_bootstrap_result(joined_space=True, created_space=False))
-    monkeypatch.setattr("claude_google_chat.bootstrap.bootstrap", boot)
-
-    result = runner.invoke(cli.app, ["bootstrap"])
-    assert result.exit_code == 0
-    boot.assert_called_once()
-    assert f"joined space {SPACE_ID}" in result.stdout
-    assert "subscription: subscriptions/sub-1" in result.stdout
-
-
-def test_bootstrap_reports_created_space(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", pubsub_topic="projects/p/topics/t")
-    boot = MagicMock(return_value=_bootstrap_result(created_space=True, joined_space=False))
-    monkeypatch.setattr("claude_google_chat.bootstrap.bootstrap", boot)
-
-    result = runner.invoke(cli.app, ["bootstrap"])
-    assert result.exit_code == 0
-    assert f"created space {SPACE_ID}" in result.stdout
-
-
-def test_bootstrap_reports_already_member(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", pubsub_topic="projects/p/topics/t")
-    boot = MagicMock(return_value=_bootstrap_result(created_space=False, joined_space=False))
-    monkeypatch.setattr("claude_google_chat.bootstrap.bootstrap", boot)
-
-    result = runner.invoke(cli.app, ["bootstrap"])
-    assert result.exit_code == 0
-    assert f"already a member of space {SPACE_ID}" in result.stdout
-
-
-def test_bootstrap_not_configured_exits_code_2(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", pubsub_topic="projects/p/topics/t")
-    boot = MagicMock(side_effect=ChatAppNotConfiguredError("configure the Chat app first"))
-    monkeypatch.setattr("claude_google_chat.bootstrap.bootstrap", boot)
-
-    result = runner.invoke(cli.app, ["bootstrap"])
-    assert result.exit_code == 2
-    assert "configure the Chat app first" in result.stderr
-
-
-def test_bootstrap_missing_config_fails_fast(
-    runner: CliRunner,
-    cli_config_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    boot = MagicMock()
-    monkeypatch.setattr("claude_google_chat.bootstrap.bootstrap", boot)
-    result = runner.invoke(cli.app, ["bootstrap"])
-    assert result.exit_code != 0
-    assert isinstance(result.exception, ValueError)
-    boot.assert_not_called()
-
-
-# --------------------------------------------------------------------------- #
 # status / setup.
 # --------------------------------------------------------------------------- #
 
@@ -733,22 +583,8 @@ def test_auth_login_client_file_missing_path_exits_nonzero(
 
 
 # --------------------------------------------------------------------------- #
-# serve / listen --space-id override.
+# listen --space-id override.
 # --------------------------------------------------------------------------- #
-
-
-def test_serve_space_id_override(
-    runner: CliRunner,
-    write_cli_config: Callable[..., Path],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    write_cli_config(service_account_file="/tmp/sa.json", space_id=SPACE_ID)
-    run = MagicMock(return_value=0)
-    monkeypatch.setattr("claude_google_chat.serve.run", run)
-    result = runner.invoke(cli.app, ["serve", "--once", "--space-id", "spaces/OTHER"])
-    assert result.exit_code == 0
-    config_arg = run.call_args.args[0]
-    assert config_arg.space_id == "spaces/OTHER"
 
 
 def test_listen_space_id_override(
