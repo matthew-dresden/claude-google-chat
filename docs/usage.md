@@ -19,7 +19,7 @@ This page covers the `cgc` CLI, the Claude Code plugin commands, the listener be
 cgc config init
 cgc config set webhook_url "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=...&token=..."
 cgc config set space_id "spaces/AAAA"
-cgc config set trigger_prefix "claude-command:"
+cgc config set trigger_prefix "claude:"
 cgc config get space_id
 cgc config show
 ```
@@ -54,6 +54,15 @@ cgc chat send --status error   --text "Migration failed on step 3"
 
 `--status` is one of `info | working | success | error | blocked`. A non-2xx HTTP response causes a fail-fast non-zero exit with the status code and a redacted URL.
 
+**Clean by default.** The message posted to Chat is just the emoji-prefixed summary line (e.g. `✅ Build is green`) — the machine-readable JSON envelope is **not** embedded in the human-facing Chat view. The machine channel is the JSONL on `cgc listen` / `cgc serve` stdout. To embed the JSON envelope in the Chat text, set `send_envelope = true` (`CGC_SEND_ENVELOPE=true`) in config, or override per send:
+
+```bash
+cgc chat send --status success --text "Build is green" --envelope     # append the JSON envelope
+cgc chat send --status success --text "Build is green" --no-envelope   # force clean summary only
+```
+
+`--envelope` / `--no-envelope` is tri-state: omit it to use the resolved `send_envelope` config value (default `false`); pass either flag to override config for that one send.
+
 ### `cgc listen`
 
 Start the inbound listener.
@@ -65,7 +74,7 @@ cgc listen --timeout 300            # exit non-zero if idle for 300 seconds
 cgc listen --space-id spaces/AAAA   # override the configured space for this run
 ```
 
-Each new message is emitted as a single JSON line to stdout. Only messages whose text starts with the configured trigger prefix (default `claude-command:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing.
+Each new message is emitted as a single JSON line to stdout. Only messages whose text starts with the configured trigger prefix (default `claude:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing.
 
 ### `cgc setup`
 
@@ -272,7 +281,7 @@ Status → emoji mapping (the single source of truth in `messages.py`):
 Humans send commands as a plain line starting with the trigger prefix:
 
 ```
-claude-command: deploy prod --force
+claude: deploy prod --force
 ```
 
 `parse_message` reads this as `kind == "command"`, `command == "deploy"`, `args == ["prod", "--force"]`. The trigger prefix is configurable via `CGC_TRIGGER_PREFIX`.
@@ -283,7 +292,9 @@ claude-command: deploy prod --force
 
 ## Examples by kind
 
-**Status** (Claude → space):
+By default the message posted into Chat is the clean summary line alone. The fenced JSON block shown under each example below is the machine-readable envelope — it is emitted on `cgc listen` / `cgc serve` stdout (JSONL), and is only embedded in the Chat text when `send_envelope` is enabled (or `cgc chat send --envelope`).
+
+**Status** (Claude → space) — clean Chat text, with the corresponding envelope:
 
 ```
 ⏳ Running tests
@@ -295,10 +306,10 @@ claude-command: deploy prod --force
 **Command** (human → space):
 
 ```
-claude-command: rerun-ci --branch main
+claude: rerun-ci --branch main
 ```
 
-**Result** (Claude → space, linked to a command):
+**Result** (Claude → space, linked to a command) — clean Chat text, with the corresponding envelope:
 
 ```
 ✅ CI rerun complete

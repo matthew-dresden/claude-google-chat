@@ -27,8 +27,10 @@ import pytest
 from claude_google_chat.config import (
     DEFAULT_LISTEN_TIMEOUT,
     DEFAULT_POLL_INTERVAL,
+    DEFAULT_SEND_ENVELOPE,
     ENV_OVERRIDES,
     Config,
+    _parse_bool,
     _redact,
     default_token_path,
     merge_and_write_config,
@@ -130,6 +132,57 @@ def test_load_invalid_numeric_env_fails_fast() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# load(): send_envelope boolean coercion (default, env, file, fail-fast).
+# --------------------------------------------------------------------------- #
+
+
+def test_send_envelope_defaults_to_false() -> None:
+    """The human-facing Chat view is clean by default (envelope opt-in)."""
+    config = Config.load(path=Path("/nonexistent.toml"), env={})
+    assert config.send_envelope is DEFAULT_SEND_ENVELOPE
+    assert config.send_envelope is False
+
+
+@pytest.mark.parametrize("raw", ["1", "true", "TRUE", "Yes", "on", "ON"])
+def test_send_envelope_truthy_env_values_parse_true(raw: str) -> None:
+    config = Config.load(path=Path("/nonexistent.toml"), env={"CGC_SEND_ENVELOPE": raw})
+    assert config.send_envelope is True
+
+
+@pytest.mark.parametrize("raw", ["0", "false", "FALSE", "No", "off", "OFF"])
+def test_send_envelope_falsey_env_values_parse_false(raw: str) -> None:
+    config = Config.load(path=Path("/nonexistent.toml"), env={"CGC_SEND_ENVELOPE": raw})
+    assert config.send_envelope is False
+
+
+def test_send_envelope_unparseable_env_fails_fast() -> None:
+    """An unrecognised boolean spelling raises rather than silently defaulting."""
+    env = {"CGC_SEND_ENVELOPE": "maybe"}
+    with pytest.raises(ValueError) as exc_info:
+        Config.load(path=Path("/nonexistent.toml"), env=env)
+    assert "boolean" in str(exc_info.value).lower()
+
+
+def test_send_envelope_reads_typed_bool_from_toml(
+    write_config_file: Callable[..., Path],
+) -> None:
+    """A TOML boolean (already typed) is honoured without coercion errors."""
+    path = write_config_file(send_envelope=True)
+    config = Config.load(path=path, env={})
+    assert config.send_envelope is True
+
+
+def test_parse_bool_accepts_native_bool() -> None:
+    assert _parse_bool(True) is True
+    assert _parse_bool(False) is False
+
+
+def test_parse_bool_rejects_unparseable_value() -> None:
+    with pytest.raises(ValueError):
+        _parse_bool("definitely-not-a-bool")
+
+
+# --------------------------------------------------------------------------- #
 # load(): precedence (env over file, empty env ignored).
 # --------------------------------------------------------------------------- #
 
@@ -163,18 +216,23 @@ def test_env_supplies_value_absent_from_file() -> None:
 
 def test_every_env_override_is_honoured() -> None:
     """Each declared env var maps onto its config field."""
-    # Numeric fields need parseable values; everything else takes a string marker.
-    numeric_fields = {"poll_interval", "listen_timeout", "webhook_timeout", "page_size"}
-    env = {
-        var: f"value-for-{key}" for key, var in ENV_OVERRIDES.items() if key not in numeric_fields
+    # Typed fields need parseable values; everything else takes a string marker.
+    typed_fields = {
+        "poll_interval",
+        "listen_timeout",
+        "webhook_timeout",
+        "page_size",
+        "send_envelope",
     }
+    env = {var: f"value-for-{key}" for key, var in ENV_OVERRIDES.items() if key not in typed_fields}
     env["CGC_POLL_INTERVAL"] = "3.5"
     env["CGC_LISTEN_TIMEOUT"] = "12.0"
     env["CGC_WEBHOOK_TIMEOUT"] = "45.0"
     env["CGC_PAGE_SIZE"] = "250"
+    env["CGC_SEND_ENVELOPE"] = "true"
     config = Config.load(path=Path("/nonexistent.toml"), env=env)
     for key in ENV_OVERRIDES:
-        if key in numeric_fields:
+        if key in typed_fields:
             continue
         value = getattr(config, key)
         assert value == f"value-for-{key}", key
@@ -182,6 +240,7 @@ def test_every_env_override_is_honoured() -> None:
     assert config.listen_timeout == 12.0
     assert config.webhook_timeout == 45.0
     assert config.page_size == 250
+    assert config.send_envelope is True
 
 
 # --------------------------------------------------------------------------- #
@@ -256,12 +315,12 @@ def test_redacted_masks_all_secret_keys(make_config: Callable[..., Config]) -> N
 def test_redacted_preserves_non_secret_fields(make_config: Callable[..., Config]) -> None:
     config = make_config(
         space_id="spaces/AAAA",
-        trigger_prefix="claude-command:",
+        trigger_prefix="claude:",
         owner_email="owner@example.com",
     )
     redacted = config.redacted()
     assert redacted["space_id"] == "spaces/AAAA"
-    assert redacted["trigger_prefix"] == "claude-command:"
+    assert redacted["trigger_prefix"] == "claude:"
     assert redacted["owner_email"] == "owner@example.com"
 
 

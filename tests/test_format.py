@@ -34,7 +34,7 @@ def test_format_round_trips_status() -> None:
 
 
 def test_parse_trigger_line() -> None:
-    parsed = parse_message("claude-command: deploy prod --force")
+    parsed = parse_message("claude: deploy prod --force")
     assert parsed.kind == "command"
     assert parsed.command == "deploy"
     assert parsed.args == ["prod", "--force"]

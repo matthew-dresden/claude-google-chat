@@ -389,10 +389,10 @@ This is the end-to-end proof. With `cgc serve` running:
 1. **Inbound (you → Claude):** in the Chat space, post a trigger-prefixed
    command, e.g.:
    ```
-   claude-command: status
+   claude: status
    ```
    (Use whatever `CGC_TRIGGER_PREFIX` you configured; the default is
-   `claude-command:`.)
+   `claude:`.)
 
 2. **Observe:** `cgc serve` emits a structured JSON line on stdout for that
    message — confirming the app **read** the space as the service account.

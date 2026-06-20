@@ -31,13 +31,35 @@ from claude_google_chat.messages import ChatMessage, format_message
 # --------------------------------------------------------------------------- #
 
 
-def test_send_webhook_posts_formatted_envelope(
+def test_send_webhook_posts_clean_summary_by_default(
     make_config: Any,
     mocked_webhook: Any,
     webhook_payloads: Any,
     frozen_clock: str,
 ) -> None:
+    """With the default ``send_envelope=False`` the webhook gets only the summary."""
     config = make_config()
+    assert config.send_envelope is False
+    msg = ChatMessage(kind="status", status="success", text="deploy done")
+
+    chat.send_webhook(config, msg)
+
+    payloads = webhook_payloads()
+    assert len(payloads) == 1
+    # Clean human view: the emoji-prefixed summary alone, no fenced JSON envelope.
+    assert payloads[0] == {"text": format_message(msg, include_envelope=False)}
+    assert "deploy done" in payloads[0]["text"]
+    assert "```" not in payloads[0]["text"]
+
+
+def test_send_webhook_posts_envelope_when_send_envelope_enabled(
+    make_config: Any,
+    mocked_webhook: Any,
+    webhook_payloads: Any,
+    frozen_clock: str,
+) -> None:
+    """``send_envelope=True`` appends the machine-readable JSON envelope."""
+    config = make_config(send_envelope=True)
     msg = ChatMessage(kind="status", status="success", text="deploy done")
 
     chat.send_webhook(config, msg)
@@ -45,9 +67,10 @@ def test_send_webhook_posts_formatted_envelope(
     payloads = webhook_payloads()
     assert len(payloads) == 1
     # The posted body carries the exact wire form produced by format_message.
-    assert payloads[0] == {"text": format_message(msg)}
+    assert payloads[0] == {"text": format_message(msg, include_envelope=True)}
     assert "deploy done" in payloads[0]["text"]
     assert frozen_clock in payloads[0]["text"]
+    assert "```" in payloads[0]["text"]
 
 
 def test_send_webhook_requires_webhook_url(make_config: Any) -> None:
@@ -213,6 +236,7 @@ def test_post_message_as_app_creates_message(
     frozen_clock: str,
 ) -> None:
     config = make_config()
+    assert config.send_envelope is False
     msg = ChatMessage(kind="result", status="success", text="all good")
 
     result = chat.post_message_as_app(config, msg, service=fake_chat_service)
@@ -220,10 +244,28 @@ def test_post_message_as_app_creates_message(
     assert result == fake_chat_service.create_result
     call = fake_chat_service.create_calls[0]
     assert call["parent"] == config.space_id
-    assert call["body"]["text"] == format_message(msg)
+    # Clean human reply by default: summary only, no fenced JSON envelope.
+    assert call["body"]["text"] == format_message(msg, include_envelope=False)
+    assert "```" not in call["body"]["text"]
     # Unthreaded post: no reply option and no thread in the body.
     assert "messageReplyOption" not in call
     assert "thread" not in call["body"]
+
+
+def test_post_message_as_app_includes_envelope_when_enabled(
+    make_config: Any,
+    fake_chat_service: Any,
+    frozen_clock: str,
+) -> None:
+    """``send_envelope=True`` makes the app reply carry the JSON envelope."""
+    config = make_config(send_envelope=True)
+    msg = ChatMessage(kind="result", status="success", text="all good")
+
+    chat.post_message_as_app(config, msg, service=fake_chat_service)
+
+    call = fake_chat_service.create_calls[0]
+    assert call["body"]["text"] == format_message(msg, include_envelope=True)
+    assert "```" in call["body"]["text"]
 
 
 def test_post_message_as_app_threads_reply(

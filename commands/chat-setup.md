@@ -62,7 +62,7 @@ redacted). The required keys are:
 - **`webhook_url`** (`CGC_WEBHOOK_URL`) — required for sending status pings.
 - **`space_id`** (`CGC_SPACE_ID`) — required for reading/listening, e.g. `spaces/AAAA`.
 - **`oauth_client_file`** (`CGC_OAUTH_CLIENT_FILE`) — required for reading/listening.
-- **`trigger_prefix`** (`CGC_TRIGGER_PREFIX`) — optional, default `claude-command:`.
+- **`trigger_prefix`** (`CGC_TRIGGER_PREFIX`) — optional, default `claude:`.
 
 ## 3. Create the Google Chat incoming webhook (outbound)
 
@@ -112,10 +112,10 @@ directory with restrictive permissions. Tokens are never logged.
 ## 6. Set the trigger prefix (optional)
 
 The inbound listener recognizes commands whose message text starts with the
-configured trigger prefix (default `claude-command:`). To override:
+configured trigger prefix (default `claude:`). To override:
 
 ```bash
-cgc config set trigger_prefix "claude-command:"
+cgc config set trigger_prefix "claude:"
 ```
 
 ## 7. Verify

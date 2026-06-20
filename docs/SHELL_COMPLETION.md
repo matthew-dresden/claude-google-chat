@@ -171,7 +171,7 @@ Once enabled, tab completion suggests **commands, sub-groups, options, and argum
 | `cgc completion <shell>` / `--shell` | `bash`, `zsh`, `fish`. |
 | `cgc auth login --client-file <TAB>` | File paths (native shell file completion). |
 | `cgc serve --space-id` / `cgc listen --space-id` | The `space_id` from your current config, if set. |
-| `cgc clear --trigger-prefix` | The `trigger_prefix` from your current config (defaults to `claude-command:`). |
+| `cgc clear --trigger-prefix` | The `trigger_prefix` from your current config (defaults to `claude:`). |
 
 The config-key and `--status` value sets are derived from the CLI's single sources of truth (`ENV_OVERRIDES` and `ALLOWED_STATUSES`), so suggestions can never drift from the commands `cgc` actually accepts.
 

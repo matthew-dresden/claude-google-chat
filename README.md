@@ -27,7 +27,7 @@
 
 - **Outbound status pings** to a Google Chat space via an **incoming webhook** (no OAuth required for send-only).
 - **Inbound commands/messages** read from the space via the **Google Chat REST API** (OAuth user credentials).
-- An **event-driven listener** that polls the space and surfaces new messages prefixed with a configurable `claude-command:` trigger.
+- An **event-driven listener** that polls the space and surfaces new messages prefixed with a configurable `claude:` trigger.
 - A **structured message format** so Claude Code and humans exchange status, commands, and results unambiguously.
 
 ---
@@ -50,7 +50,7 @@ When Claude Code runs long or autonomous tasks, you need a way to (a) see what i
 `claude-google-chat` provides that two-way channel:
 
 - Claude posts structured **status** updates (`info`, `working`, `success`, `error`, `blocked`) to a shared space.
-- Humans reply with `claude-command: <command> [args...]` lines that the listener surfaces back to Claude.
+- Humans reply with `claude: <command> [args...]` lines that the listener surfaces back to Claude.
 - The same envelope is used in both directions, so machines and people read the same source of truth.
 
 Send-only operation needs nothing but an incoming webhook URL. Reading inbound commands uses OAuth user credentials scoped to Chat messages. No hardcoded secrets — everything comes from environment variables or a user config file.
@@ -155,11 +155,14 @@ The user config file lives in your OS config directory (resolved via `platformdi
 | **`space_id`**<br>`CGC_SPACE_ID` | Chat space id, e.g. `spaces/AAAA`. **Required** for read/listen. |
 | **`oauth_client_file`**<br>`CGC_OAUTH_CLIENT_FILE` | Path to Google OAuth client secrets JSON. **Required** for read/listen. |
 | **`token_file`**<br>`CGC_TOKEN_FILE` | Cached OAuth user token (path). Optional · default `<config_dir>/token.json`. |
-| **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude-command:`. |
+| **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude:`. |
 | **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
 | **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener/responder idle timeout, seconds (float); governs `listen` and `serve`. Optional · default `0` (run forever). |
+| **`send_envelope`**<br>`CGC_SEND_ENVELOPE` | Append the machine-readable JSON envelope to outbound Chat text. Optional · default `false` (clean human-facing summary only). |
 
 Secrets are never echoed: `cgc config show` masks the webhook token and token-file contents. See [docs/configuration.md](docs/configuration.md) for details.
+
+**Human vs. machine views.** By default outbound Chat messages (`cgc chat send` and `cgc serve` replies) are the clean, emoji-prefixed summary line alone — the JSON envelope is **not** posted into the human-facing Chat view. The machine-readable channel is the JSONL written to stdout by `cgc listen` / `cgc serve` (one envelope per line). To additionally embed the JSON envelope in the Chat text, opt in with `send_envelope = true` (or `CGC_SEND_ENVELOPE=true`), or per send with `cgc chat send --envelope`.
 
 ---
 
@@ -199,7 +202,7 @@ cgc listen --once          # drain currently-pending messages and exit (for hook
 cgc listen --timeout 300   # exit non-zero if idle for 300s
 ```
 
-Each emitted line is a structured JSON message. Inbound messages are surfaced when their text starts with the configured trigger prefix (default `claude-command:`).
+Each emitted line is a structured JSON message. Inbound messages are surfaced when their text starts with the configured trigger prefix (default `claude:`).
 
 ### Clear / housekeeping
 

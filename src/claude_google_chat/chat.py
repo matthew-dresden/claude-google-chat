@@ -48,7 +48,7 @@ def send_webhook(config: Config, msg: ChatMessage) -> None:
     config.require_keys(("webhook_url",))
     assert config.webhook_url is not None  # require_keys guarantees a non-empty value
 
-    payload = {"text": format_message(msg)}
+    payload = {"text": format_message(msg, include_envelope=config.send_envelope)}
     response = requests.post(
         config.webhook_url,
         json=payload,
@@ -103,7 +103,7 @@ def post_message_as_app(
     """
     space = _require_space(config)
     chat = service if service is not None else build_app_service(config)
-    body: dict[str, Any] = {"text": format_message(msg)}
+    body: dict[str, Any] = {"text": format_message(msg, include_envelope=config.send_envelope)}
     request_kwargs: dict[str, Any] = {"parent": space, "body": body}
     if thread_key is not None:
         body["thread"] = {"threadKey": thread_key}

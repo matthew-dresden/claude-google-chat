@@ -61,11 +61,11 @@ def test_show_masks_secrets(data_dir: Path) -> None:
 
 
 def test_merge_overwrites_and_preserves() -> None:
-    existing = {"trigger_prefix": "claude-command:", "space_id": "spaces/OLD"}
+    existing = {"trigger_prefix": "claude:", "space_id": "spaces/OLD"}
     updates = {"space_id": "spaces/NEW", "pubsub_topic": "projects/p/topics/t"}
     merged = merge_config_values(existing, updates)
     assert merged["space_id"] == "spaces/NEW"
-    assert merged["trigger_prefix"] == "claude-command:"
+    assert merged["trigger_prefix"] == "claude:"
     assert merged["pubsub_topic"] == "projects/p/topics/t"
 
 

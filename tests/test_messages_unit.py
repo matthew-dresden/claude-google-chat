@@ -6,7 +6,7 @@ ChatOps envelope contract directly:
 - ``format_message``: the on-the-wire form (emoji-prefixed summary line, the
   fenced JSON envelope, timestamp population, sorted/stable keys) and the
   status -> emoji mapping that drives the visible "title" decoration.
-- ``parse_message``: trigger-prefix detection (the ``claude-command:`` command
+- ``parse_message``: trigger-prefix detection (the ``claude:`` command
   form), custom prefixes, fenced and bare JSON envelopes, and every error path
   (None input, empty command, neither-trigger-nor-envelope, malformed JSON).
 - ``_validate``: kind/status allow-lists and the kind-specific required fields.
@@ -41,7 +41,7 @@ from claude_google_chat.messages import (
 
 
 def test_default_trigger_prefix_value() -> None:
-    assert DEFAULT_TRIGGER_PREFIX == "claude-command:"
+    assert DEFAULT_TRIGGER_PREFIX == "claude:"
 
 
 def test_status_emoji_covers_exactly_allowed_statuses() -> None:
@@ -84,6 +84,38 @@ def test_format_command_without_status_has_no_emoji_prefix() -> None:
     )
     summary = format_message(msg).splitlines()[0]
     assert summary == "deploy prod"
+
+
+def test_format_without_envelope_returns_summary_only() -> None:
+    """``include_envelope=False`` yields the clean summary line and no fenced JSON."""
+    msg = ChatMessage(
+        kind="status", status="success", text="Tests passed", ts="2026-06-20T12:00:00Z"
+    )
+    wire = format_message(msg, include_envelope=False)
+    assert wire == f"{STATUS_EMOJI['success']} Tests passed"
+    assert "```" not in wire
+
+
+def test_format_without_envelope_still_validates() -> None:
+    """The summary-only path validates first, failing fast on a bad message."""
+    msg = ChatMessage(kind="status", status=None, text="x", ts="2026-06-20T12:00:00Z")
+    with pytest.raises(ValueError):
+        format_message(msg, include_envelope=False)
+
+
+def test_format_default_includes_envelope() -> None:
+    """The default keeps the fenced JSON envelope (machine/log callers)."""
+    msg = ChatMessage(kind="status", status="info", text="x", ts="2026-06-20T12:00:00Z")
+    assert "```" in format_message(msg)
+
+
+def test_format_without_envelope_matches_enveloped_summary_line(frozen_clock: str) -> None:
+    """The summary-only output equals the first line of the enveloped output."""
+    msg = ChatMessage(kind="status", status="info", text="x", ts="2026-06-20T12:00:00Z")
+    summary = format_message(msg, include_envelope=False)
+    enveloped = format_message(msg, include_envelope=True)
+    assert summary == enveloped.splitlines()[0]
+    assert "```" not in summary
 
 
 def test_format_wraps_envelope_in_fenced_code_block() -> None:
@@ -152,7 +184,7 @@ def test_format_validates_before_emitting() -> None:
 
 
 def test_parse_trigger_line_extracts_command_and_args() -> None:
-    parsed = parse_message("claude-command: deploy prod --force")
+    parsed = parse_message(f"{DEFAULT_TRIGGER_PREFIX} deploy prod --force")
     assert parsed.kind == "command"
     assert parsed.command == "deploy"
     assert parsed.args == ["prod", "--force"]
@@ -160,25 +192,25 @@ def test_parse_trigger_line_extracts_command_and_args() -> None:
 
 
 def test_parse_trigger_line_single_command_no_args() -> None:
-    parsed = parse_message("claude-command: status")
+    parsed = parse_message("claude: status")
     assert parsed.command == "status"
     assert parsed.args == []
 
 
 def test_parse_trigger_line_populates_timestamp(frozen_clock: str) -> None:
-    parsed = parse_message("claude-command: ping")
+    parsed = parse_message("claude: ping")
     assert parsed.ts == frozen_clock
 
 
 def test_parse_trigger_line_strips_surrounding_whitespace() -> None:
-    parsed = parse_message("   claude-command:    deploy   prod   ")
+    parsed = parse_message("   claude:    deploy   prod   ")
     assert parsed.command == "deploy"
     assert parsed.args == ["prod"]
 
 
 def test_parse_trigger_line_collapses_internal_whitespace() -> None:
     """split() collapses runs of spaces/tabs into single arg boundaries."""
-    parsed = parse_message("claude-command: run\t a\t  b")
+    parsed = parse_message("claude: run\t a\t  b")
     assert parsed.command == "run"
     assert parsed.args == ["a", "b"]
 
@@ -192,12 +224,12 @@ def test_parse_custom_trigger_prefix() -> None:
 def test_parse_default_prefix_not_matched_with_custom_prefix() -> None:
     """With a custom prefix, a default-prefixed line is not a command."""
     with pytest.raises(ValueError):
-        parse_message("claude-command: deploy", trigger_prefix="bot-command:")
+        parse_message("claude: deploy", trigger_prefix="bot-command:")
 
 
 def test_parse_trigger_prefix_without_command_raises() -> None:
     with pytest.raises(ValueError) as exc_info:
-        parse_message("claude-command:    ")
+        parse_message("claude:    ")
     assert "no command" in str(exc_info.value)
 
 
@@ -252,7 +284,7 @@ def test_parse_none_raises() -> None:
 def test_parse_plain_text_without_trigger_or_envelope_raises() -> None:
     with pytest.raises(ValueError) as exc_info:
         parse_message("just chatting, no command here")
-    assert "claude-command:" in str(exc_info.value)
+    assert "claude:" in str(exc_info.value)
 
 
 def test_parse_malformed_json_envelope_raises() -> None:
@@ -272,7 +304,7 @@ def test_parse_bare_json_array_is_not_an_envelope() -> None:
     """A bare (unfenced) array does not start with '{', so it is plain text."""
     with pytest.raises(ValueError) as exc_info:
         parse_message("[1, 2, 3]")
-    assert "claude-command:" in str(exc_info.value)
+    assert "claude:" in str(exc_info.value)
 
 
 def test_parse_envelope_rejects_bad_version() -> None:

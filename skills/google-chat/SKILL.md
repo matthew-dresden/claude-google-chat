@@ -1,6 +1,6 @@
 ---
 name: google-chat
-description: Google Chat ChatOps protocol for Claude Code — the structured message format and how to send status pings, read inbound commands, and recognize the claude-command trigger. Use when sending status to Google Chat, interpreting a chat command, or formatting a ChatOps message.
+description: Google Chat ChatOps protocol for Claude Code — the structured message format and how to send status pings, read inbound commands, and recognize the claude: trigger. Use when sending status to Google Chat, interpreting a chat command, or formatting a ChatOps message.
 ---
 
 # Google Chat ChatOps protocol
@@ -42,9 +42,19 @@ Example envelope:
 
 ## On-the-wire representation
 
-A message posted to Google Chat is a single message whose text is a human-readable
-summary line (prefixed with a status emoji) followed by a fenced code block
-containing the JSON envelope:
+By default a message posted to Google Chat is just the clean, human-readable
+summary line (prefixed with a status emoji):
+
+```
+⏳ Running tests
+```
+
+The machine-readable JSON envelope is **not** embedded in the human Chat view by
+default. The machine channel is the JSONL emitted on `cgc listen` / `cgc serve`
+stdout (one envelope per line). To additionally embed the envelope in the Chat
+text, opt in with `send_envelope = true` (`CGC_SEND_ENVELOPE=true`) or
+`cgc chat send --envelope`, which yields the summary line followed by a fenced
+code block containing the JSON envelope:
 
 ```
 ⏳ Running tests
@@ -53,8 +63,9 @@ containing the JSON envelope:
 ```` (fenced) ````
 ```
 
-`cgc chat send` produces this form via `format_message`. The summary line lets
-humans read the status at a glance; the fenced JSON lets tools parse it exactly.
+`cgc chat send` produces the summary line via `format_message`; with the envelope
+enabled the fenced JSON is appended so tools can parse it exactly. `parse_message`
+accepts both the trigger-prefixed line and the fenced/bare JSON envelope.
 
 ## Status → emoji mapping
 
@@ -72,17 +83,17 @@ Inbound commands are recognized when a Google Chat message text **starts with th
 configured trigger prefix**, followed by the command and its arguments:
 
 ```
-claude-command: <command> [args...]
+claude: <command> [args...]
 ```
 
-For example, `claude-command: deploy prod --force` parses to:
+For example, `claude: deploy prod --force` parses to:
 
 - **kind**: `command`
 - **command**: `deploy`
 - **args**: `["prod", "--force"]`
 
 The trigger prefix is configurable via `CGC_TRIGGER_PREFIX` (default
-`claude-command:`). The listener filters the space to messages whose text starts
+`claude:`). The listener filters the space to messages whose text starts
 with this prefix and emits each as a parsed envelope (a JSON line on stdout).
 
 ## Examples by kind
@@ -96,7 +107,7 @@ with this prefix and emits each as a parsed envelope (a JSON line on stdout).
 **command** — a human asking Claude to act (inbound, trigger form):
 
 ```
-claude-command: run-tests unit --fast
+claude: run-tests unit --fast
 ```
 
 **result** — Claude reporting the outcome, linked by `correlation_id`:

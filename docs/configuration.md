@@ -45,11 +45,12 @@ The config file is read with the Python 3.11+ stdlib `tomllib` module. Writes fr
 | **`space_id`**<br>`CGC_SPACE_ID` | Chat space id, e.g. `spaces/AAAA`. **Required** for read/listen. |
 | **`oauth_client_file`**<br>`CGC_OAUTH_CLIENT_FILE` | Path to Google OAuth client secrets JSON. **Required** for read/listen. |
 | **`token_file`**<br>`CGC_TOKEN_FILE` | Cached OAuth user token (path). Optional · default `<config_dir>/token.json`. |
-| **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude-command:`. |
+| **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude:`. |
 | **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
 | **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener/responder idle timeout, seconds (float). Optional · default `0` (run forever). |
 | **`webhook_timeout`**<br>`CGC_WEBHOOK_TIMEOUT` | Outbound webhook HTTP timeout, seconds (float). Optional · default `30.0`. |
 | **`page_size`**<br>`CGC_PAGE_SIZE` | Chat API `messages.list` page size (int). Optional · default `100`. |
+| **`send_envelope`**<br>`CGC_SEND_ENVELOPE` | Append the machine-readable JSON envelope to outbound Chat text (`cgc chat send` and `cgc serve` replies). Boolean (`true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`, case-insensitive; unparseable values fail fast). Optional · default `false` — the human-facing Chat view is the clean summary line only. The machine channel is the JSONL on `cgc listen` / `cgc serve` stdout. Override per send with `cgc chat send --envelope` / `--no-envelope`. |
 | **`service_account_file`**<br>`CGC_SERVICE_ACCOUNT_FILE` | Chat app service-account JSON key (app auth). **Required** for `bootstrap`/`serve`. |
 | **`project_id`**<br>`CGC_PROJECT_ID` | GCP project id; qualifies a bare `pubsub_topic`. Optional. |
 | **`pubsub_topic`**<br>`CGC_PUBSUB_TOPIC` | Pub/Sub topic for Chat events — bare id or `projects/<p>/topics/<t>`. **Required** for `bootstrap`. |
@@ -73,9 +74,10 @@ Operations request exactly the keys they need. For example, a read operation loa
 webhook_url = "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=REDACTED&token=REDACTED"
 space_id = "spaces/AAAA"
 oauth_client_file = "/home/you/.config/claude-google-chat/oauth_client.json"
-trigger_prefix = "claude-command:"
+trigger_prefix = "claude:"
 poll_interval = 2.0
 listen_timeout = 0
+# send_envelope = false  # default: keep human Chat messages clean (opt in to embed JSON)
 ```
 
 Equivalent environment configuration:
@@ -84,9 +86,10 @@ Equivalent environment configuration:
 export CGC_WEBHOOK_URL="https://chat.googleapis.com/v1/spaces/AAAA/messages?key=...&token=..."
 export CGC_SPACE_ID="spaces/AAAA"
 export CGC_OAUTH_CLIENT_FILE="/path/to/oauth_client.json"
-export CGC_TRIGGER_PREFIX="claude-command:"
+export CGC_TRIGGER_PREFIX="claude:"
 export CGC_POLL_INTERVAL="2.0"
 export CGC_LISTEN_TIMEOUT="0"
+# export CGC_SEND_ENVELOPE="false"  # default; set true to embed the JSON envelope in Chat text
 ```
 
 ---

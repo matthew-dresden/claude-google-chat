@@ -48,8 +48,13 @@ def test_send_webhook_posts_formatted_envelope(
     webhook_payloads,
     frozen_clock,
 ) -> None:
-    """send_webhook builds the real format and POSTs it to the configured URL."""
-    config = make_config()
+    """send_webhook builds the real format and POSTs it to the configured URL.
+
+    Uses ``send_envelope=True`` so the real wire form includes the JSON envelope
+    this test asserts on; the clean-by-default summary path is covered in the
+    chat unit tests and the first-time-setup user journey.
+    """
+    config = make_config(send_envelope=True)
     msg = ChatMessage(kind="status", status="success", text="build green")
 
     send_webhook(config, msg)
