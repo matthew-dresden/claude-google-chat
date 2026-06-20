@@ -39,20 +39,20 @@ The config file is read with the Python 3.11+ stdlib `tomllib` module. Writes fr
 
 ## Reference
 
-| Key (`config.toml`) | Env var | Required | Default | Type | Purpose |
-|---|---|---|---|---|---|
-| `webhook_url` | `CGC_WEBHOOK_URL` | yes (for send) | — | string | Google Chat incoming webhook URL |
-| `space_id` | `CGC_SPACE_ID` | yes (for read/listen) | — | string | Chat space resource id (e.g. `spaces/AAAA`) |
-| `oauth_client_file` | `CGC_OAUTH_CLIENT_FILE` | yes (for read/listen) | — | string (path) | Path to Google OAuth client secrets JSON |
-| `token_file` | `CGC_TOKEN_FILE` | no | `<config_dir>/token.json` | string (path) | Cached OAuth user token |
-| `trigger_prefix` | `CGC_TRIGGER_PREFIX` | no | `claude-command:` | string | Inbound command trigger |
-| `poll_interval` | `CGC_POLL_INTERVAL` | no | `2.0` | float (seconds) | Listener/responder poll interval |
-| `listen_timeout` | `CGC_LISTEN_TIMEOUT` | no | `0` | float (seconds) | Listener/responder idle timeout (`0` = run forever) |
-| `service_account_file` | `CGC_SERVICE_ACCOUNT_FILE` | yes (for bootstrap/serve) | — | string (path) | Chat **app** service-account JSON key (app auth) |
-| `project_id` | `CGC_PROJECT_ID` | no | — | string | GCP project id (used to qualify a bare `pubsub_topic`) |
-| `pubsub_topic` | `CGC_PUBSUB_TOPIC` | yes (for bootstrap) | — | string | Pub/Sub topic for Chat events (bare id or `projects/<p>/topics/<t>`) |
-| `space_display_name` | `CGC_SPACE_DISPLAY_NAME` | no | — | string | Name used when `bootstrap` *creates* a space (when no `space_id`) |
-| `owner_email` | `CGC_OWNER_EMAIL` | no | — | string | If set, `serve` only responds to messages from this sender |
+| Setting · env var | Description |
+| --- | --- |
+| **`webhook_url`**<br>`CGC_WEBHOOK_URL` | Google Chat incoming webhook URL. **Required** for `send`. |
+| **`space_id`**<br>`CGC_SPACE_ID` | Chat space id, e.g. `spaces/AAAA`. **Required** for read/listen. |
+| **`oauth_client_file`**<br>`CGC_OAUTH_CLIENT_FILE` | Path to Google OAuth client secrets JSON. **Required** for read/listen. |
+| **`token_file`**<br>`CGC_TOKEN_FILE` | Cached OAuth user token (path). Optional · default `<config_dir>/token.json`. |
+| **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude-command:`. |
+| **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
+| **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener/responder idle timeout, seconds (float). Optional · default `0` (run forever). |
+| **`service_account_file`**<br>`CGC_SERVICE_ACCOUNT_FILE` | Chat app service-account JSON key (app auth). **Required** for `bootstrap`/`serve`. |
+| **`project_id`**<br>`CGC_PROJECT_ID` | GCP project id; qualifies a bare `pubsub_topic`. Optional. |
+| **`pubsub_topic`**<br>`CGC_PUBSUB_TOPIC` | Pub/Sub topic for Chat events — bare id or `projects/<p>/topics/<t>`. **Required** for `bootstrap`. |
+| **`space_display_name`**<br>`CGC_SPACE_DISPLAY_NAME` | Name `bootstrap` uses when creating a space (no `space_id`). Optional. |
+| **`owner_email`**<br>`CGC_OWNER_EMAIL` | If set, `serve` only responds to this sender. Optional. |
 
 ### Which keys are required when
 
