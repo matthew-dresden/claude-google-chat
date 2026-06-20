@@ -568,6 +568,139 @@ def test_thread_name_appears_in_emitted_json_line(
     assert record["command"] == "deploy"
 
 
+# --------------------------------------------------------------------------- #
+# Session-routing run path: cgc listen --session NAME.
+# --------------------------------------------------------------------------- #
+
+
+def test_run_session_emits_routed_event_with_session_name(
+    frozen_clock: str,
+    monkeypatch: pytest.MonkeyPatch,
+    make_raw_message: Any,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Any,
+) -> None:
+    """`run(session=...)` routes via the registry and surfaces session_name."""
+    import json
+
+    from claude_google_chat.sessions import (
+        FileSessionRegistry,
+        Session,
+        SessionThread,
+    )
+
+    sessions_file = tmp_path / "sessions.json"
+    FileSessionRegistry(sessions_file).save(
+        {
+            "alpha": Session(
+                name="alpha",
+                space_id="spaces/AAAA",
+                threads=(SessionThread(name="spaces/AAAA/threads/T1", key="alpha"),),
+                dispatcher=True,
+            )
+        }
+    )
+    # A reply in alpha's claimed thread (catch-all so plain text surfaces).
+    raw = make_raw_message(text="restart now", thread="spaces/AAAA/threads/T1")
+    monkeypatch.setattr(
+        "claude_google_chat.listener.list_messages",
+        lambda config, since=None: [raw],
+    )
+
+    exit_code = run(
+        _config(
+            require_trigger=False,
+            state_file=str(tmp_path / "state.json"),
+            sessions_file=str(sessions_file),
+        ),
+        once=True,
+        session="alpha",
+    )
+
+    assert exit_code == 0
+    out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert len(out_lines) == 1
+    record = json.loads(out_lines[0])
+    assert record["session_name"] == "alpha"
+    assert record["thread_name"] == "spaces/AAAA/threads/T1"
+    assert record["text"] == "restart now"
+
+
+def test_run_session_dispatcher_posts_menu_via_webhook(
+    frozen_clock: str,
+    monkeypatch: pytest.MonkeyPatch,
+    make_raw_message: Any,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Any,
+) -> None:
+    """A truly-unrouted new thread makes the dispatcher post a menu (no emit)."""
+    from claude_google_chat.sessions import FileSessionRegistry, Session
+
+    sessions_file = tmp_path / "sessions.json"
+    FileSessionRegistry(sessions_file).save(
+        {
+            "alpha": Session(
+                name="alpha",
+                space_id="spaces/AAAA",
+                threads=(),
+                dispatcher=True,
+            )
+        }
+    )
+    # A new, unclaimed thread with no NAME: prefix -> dispatcher posts the menu.
+    raw = make_raw_message(text="anyone around?", thread="spaces/AAAA/threads/NEW")
+    monkeypatch.setattr(
+        "claude_google_chat.listener.list_messages",
+        lambda config, since=None: [raw],
+    )
+    menu_posts: list[str | None] = []
+
+    def _fake_send(config: Any, msg: Any, thread_key: str | None = None) -> str:
+        menu_posts.append(thread_key)
+        return "spaces/AAAA/threads/NEW"
+
+    monkeypatch.setattr("claude_google_chat.chat.send_webhook", _fake_send)
+
+    exit_code = run(
+        _config(
+            require_trigger=False,
+            webhook_url="https://example/webhook",
+            state_file=str(tmp_path / "state.json"),
+            sessions_file=str(sessions_file),
+        ),
+        once=True,
+        session="alpha",
+    )
+
+    assert exit_code == 0
+    # Nothing surfaced as work.
+    out_lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert out_lines == []
+    # The menu was posted into the unrouted thread.
+    assert menu_posts == ["spaces/AAAA/threads/NEW"]
+
+
+def test_run_session_unknown_session_fails_fast(
+    frozen_clock: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """`run(session=...)` for an unregistered session raises ValueError (fail fast)."""
+    monkeypatch.setattr(
+        "claude_google_chat.listener.list_messages",
+        lambda config, since=None: [],
+    )
+    with pytest.raises(ValueError):
+        run(
+            _config(
+                state_file=str(tmp_path / "state.json"),
+                sessions_file=str(tmp_path / "sessions.json"),
+            ),
+            once=True,
+            session="ghost",
+        )
+
+
 def test_run_returns_nonzero_on_idle_timeout(
     frozen_clock: str,
     monkeypatch: pytest.MonkeyPatch,

@@ -55,6 +55,7 @@ The config file is read with the Python 3.11+ stdlib `tomllib` module. Writes fr
 | **`state_file`**<br>`CGC_STATE_FILE` | Path to the durable high-water state file for `listen`. On startup the last-processed message time is loaded from it; on each emitted/seen message it is updated and persisted (written with `0600` permissions). This makes a restart **resume** from the last processed message instead of re-reading recent history and re-emitting already-seen messages. A missing or corrupt file is treated as a fresh start (never a crash). Optional · default `<config_dir>/listen-state.json`. |
 | **`threads`**<br>`CGC_THREADS` | Optional thread filter for `cgc listen`. When one or more thread resource names (`spaces/.../threads/...`) are configured, the listener emits **only** messages whose raw `thread.name` is in this set — applied *in addition to* the sender-type (HUMAN-only) and `require_trigger` logic. When empty (default) the whole space is surfaced (unchanged). In `config.toml` this is a TOML array of strings; as the `CGC_THREADS` env var it is a **comma-separated** list (whitespace trimmed, empty entries dropped). Override per run with one or more `cgc listen --thread <THREAD_NAME>` flags. Optional · default empty (no filter). |
 | **`require_trigger`**<br>`CGC_REQUIRE_TRIGGER` | Controls which inbound messages `cgc listen` emits. When `true` (default, current behavior) only messages whose text starts with `trigger_prefix` are emitted (parsed as commands). When `false` (catch-all mode) **every** message from a HUMAN sender is surfaced regardless of prefix — trigger-prefixed lines still parse as structured commands, while plain conversational lines are surfaced as a message carrying the full text. Non-human senders (BOT/app/webhook) are always excluded so the listener never echoes its own outbound posts or other bots (loop prevention). Boolean (`true`/`false`/`1`/`0`/`yes`/`no`/`on`/`off`, case-insensitive; unparseable values fail fast). Optional · default `true`. |
+| **`sessions_file`**<br>`CGC_SESSIONS_FILE` | Path to the durable **session registry** used by `cgc connect` / `cgc session list` / `cgc disconnect` and routing-aware `cgc listen --session NAME`. JSON document mapping each session name to its space, claimed threads (`{key, name}`), dispatcher flag, and `created_at`, written with `0600` permissions. A missing file is an empty registry; a present-but-malformed file fails fast (it is durable user intent, never silently discarded). Holds only resource names and labels — never secrets. Optional · default `<config_dir>/sessions.json`. |
 
 ### Which keys are required when
 
@@ -76,6 +77,7 @@ poll_interval = 2.0
 listen_timeout = 0
 # send_envelope = false  # default: keep human Chat messages clean (opt in to embed JSON)
 # threads = ["spaces/AAAA/threads/T1"]  # optional: listen only in these threads
+# sessions_file = "/home/you/.config/claude-google-chat/sessions.json"  # session registry
 ```
 
 Equivalent environment configuration:
@@ -132,6 +134,24 @@ Neither value is hardcoded; both come from the environment or the config file.
 - **Filter listen by thread** — set `threads` (config array or `CGC_THREADS` comma list) or pass one or more `cgc listen --thread <THREAD_NAME>` flags to restrict emission to those threads. The filter composes with the trigger / sender-type rules. Each emitted JSON event includes a `thread_name` field naming the owning thread (`null` when the message is unthreaded), so a consumer knows which thread a message belongs to.
 
 A typical loop is: `cgc chat send --thread-key deploy-42 ...` (capture the printed `thread.name`), then `cgc listen --thread <that-thread-name>` to read only replies in that thread.
+
+---
+
+## Sessions
+
+The **session layer** sits on top of the thread primitives and is what most operators use day to day. A *session* is a named, durable binding between a working context (typically a git repo + branch + a Claude Code instance) and one or more Google Chat threads in a single shared space. The session map lives in `sessions_file` (`CGC_SESSIONS_FILE`, default `<config_dir>/sessions.json`, `0600`).
+
+- **`cgc connect [NAME] [--space SPACE_ID] [--dispatcher]`** — create or reuse a session. `NAME` is explicit, or derived deterministically from the git repo basename + branch + a short hash of the absolute current directory (so two checkouts of the same repo/branch get distinct, stable names). The session's **primary thread** is opened by sending an opening message (thread key = the session name) and recording the returned `thread.name`. Reconnecting an existing `NAME` reuses its entry and thread (idempotent — no duplicate post). The **first** session connected auto-becomes the **dispatcher** when none exists; `--dispatcher` forces it (demoting any other so there is at most one). Requires `webhook_url` and a resolvable space.
+- **`cgc session list`** — print every registered session, its threads, and which one is the dispatcher.
+- **`cgc disconnect NAME [--notify]`** — remove `NAME` from the registry (with `--notify`, post a "session disconnected" note to its primary thread first). If it was the dispatcher and others remain, one survivor is promoted so the space is never left without a dispatcher.
+
+**Name routing** (`cgc listen --session NAME`): for each new HUMAN message with thread `T` and text,
+- `T` is one of `NAME`'s claimed threads → **emit** it (a reply in my thread);
+- `T` is claimed by no session and the text starts with `NAME:` (case-insensitive, optional space) → **claim** `T` for `NAME` and emit, with the `NAME:` prefix stripped;
+- `T` is unclaimed, this session is the dispatcher, and the text starts with **no** registered session name → the dispatcher posts a "which session?" menu to `T` (not emitted as work);
+- `T` is claimed by a **different** session → skipped.
+
+Each emitted JSON event carries both `session_name` and `thread_name`. Registry claims and the existing high-water/resume state are both persisted.
 
 ---
 

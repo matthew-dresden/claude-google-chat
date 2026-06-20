@@ -151,6 +151,27 @@ def complete_thread(incomplete: str) -> list[str | tuple[str, str]]:
     return list(_filter(config.threads, incomplete))
 
 
+@safe_completer
+def complete_session_name(incomplete: str) -> list[str | tuple[str, str]]:
+    """Complete a session name from the local session registry.
+
+    Reads the durable session registry (``sessions_file``) and suggests the
+    registered session names so ``cgc connect``/``disconnect`` and
+    ``cgc listen --session`` complete from the user's live sessions. Returns
+    ``[]`` when the registry is absent/empty or cannot be read — a completer must
+    never break the shell.
+    """
+    config = _load_config_safely()
+    if config is None or not config.sessions_file:
+        return []
+    from pathlib import Path
+
+    from claude_google_chat.sessions import FileSessionRegistry
+
+    sessions = FileSessionRegistry(Path(config.sessions_file)).load()
+    return list(_filter(sessions.keys(), incomplete))
+
+
 def render_completion_script(prog_name: str, shell: str) -> str:
     """Return the completion script for ``shell`` (wrapping Typer/Click).
 

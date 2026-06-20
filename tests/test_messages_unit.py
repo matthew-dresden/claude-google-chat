@@ -58,6 +58,24 @@ def test_message_from_human_text_surfaces_plain_line_without_raising(frozen_cloc
     assert "just chatting here" in to_jsonl(msg)
 
 
+def test_session_name_round_trips_through_jsonl_and_envelope(frozen_clock: str) -> None:
+    """A routed event carries both session_name and thread_name in the JSON line."""
+    msg = ChatMessage(
+        kind="command",
+        text="deploy",
+        command="deploy",
+        thread_name="spaces/AAAA/threads/T1",
+        session_name="alpha",
+    )
+    record = json.loads(to_jsonl(msg))
+    assert record["session_name"] == "alpha"
+    assert record["thread_name"] == "spaces/AAAA/threads/T1"
+    # And it round-trips back through parse_message via the fenced envelope.
+    parsed = parse_message(format_message(msg, include_envelope=True))
+    assert parsed.session_name == "alpha"
+    assert parsed.thread_name == "spaces/AAAA/threads/T1"
+
+
 def test_message_from_human_text_honours_custom_prefix(frozen_clock: str) -> None:
     msg = message_from_human_text("bot: ship it", trigger_prefix="bot:")
     assert msg.command == "ship"

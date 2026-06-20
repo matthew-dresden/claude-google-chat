@@ -142,6 +142,38 @@ def test_complete_thread_empty_when_unset(patched_config_path: Path) -> None:
     assert completion.complete_thread("") == []
 
 
+def test_complete_session_name_from_registry(patched_config_path: Path, tmp_path: Path) -> None:
+    """Session names are suggested from the durable registry file."""
+    from claude_google_chat.sessions import (
+        FileSessionRegistry,
+        Session,
+        SessionThread,
+    )
+
+    sessions_file = tmp_path / "sessions.json"
+    FileSessionRegistry(sessions_file).save(
+        {
+            "alpha": Session(
+                name="alpha",
+                space_id="spaces/AAAA",
+                threads=(SessionThread(name="spaces/AAAA/threads/T1", key="alpha"),),
+                dispatcher=True,
+            ),
+            "beta": Session(name="beta", space_id="spaces/AAAA"),
+        }
+    )
+    _write_config(patched_config_path, sessions_file=str(sessions_file))
+    assert set(completion.complete_session_name("")) == {"alpha", "beta"}
+    assert completion.complete_session_name("al") == ["alpha"]
+
+
+def test_complete_session_name_empty_when_no_registry(
+    patched_config_path: Path, tmp_path: Path
+) -> None:
+    _write_config(patched_config_path, sessions_file=str(tmp_path / "absent.json"))
+    assert completion.complete_session_name("") == []
+
+
 def test_config_derived_completers_safe_without_file(patched_config_path: Path) -> None:
     # No config file written -> optional-value completers must return [] not raise.
     assert completion.complete_space_id("") == []
@@ -163,6 +195,7 @@ def test_config_derived_completers_safe_on_load_error(
     assert completion.complete_space_id("") == []
     assert completion.complete_trigger_prefix("") == []
     assert completion.complete_thread("") == []
+    assert completion.complete_session_name("") == []
 
 
 def test_detect_shell_returns_name_or_none() -> None:

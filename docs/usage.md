@@ -95,6 +95,39 @@ Each new message is emitted as a single JSON line to stdout. By default (`requir
 
 **Durable resume.** The poll high-water marker is persisted to `state_file` (`CGC_STATE_FILE`, default `<config_dir>/listen-state.json`, written `0600`). On restart the listener resumes from the last-processed message instead of re-reading recent history and re-emitting already-seen messages. A missing or corrupt state file degrades to a fresh start, never a crash.
 
+### Sessions: `cgc connect` / `cgc session list` / `cgc disconnect`
+
+The **session layer** binds a named working context (typically a git repo + branch + a Claude Code instance) to one or more Chat threads in the shared space, on top of the thread primitives above. State lives in `sessions_file` (`CGC_SESSIONS_FILE`, default `<config_dir>/sessions.json`, `0600`).
+
+```bash
+cgc connect                      # derive NAME from git repo+branch+cwd; open its primary thread
+cgc connect myapp                # explicit NAME
+cgc connect myapp --space spaces/AAAA   # override the shared space
+cgc connect myapp --dispatcher   # force this session to be the dispatcher
+
+cgc session list                 # show sessions, their threads, and which is the dispatcher
+cgc disconnect myapp             # remove from the registry (re-elect a dispatcher if needed)
+cgc disconnect myapp --notify    # also post a 'disconnected' note to its primary thread
+```
+
+`connect` opens (or reuses) the session's **primary thread** by sending an opening message keyed by the session name and recording the returned `thread.name`; it then prints routing instructions (how to reply, and how to start a new thread with a top-level `NAME: ...` message). Reconnecting an existing `NAME` is idempotent. The **first** session connected auto-becomes the **dispatcher**; `--dispatcher` forces it (only one session is the dispatcher at a time).
+
+**Routing-aware listen (`cgc listen --session NAME`).** Run the listener bound to a session so inbound messages are routed:
+
+```bash
+cgc listen --session myapp
+```
+
+For each new HUMAN message with thread `T` and text:
+- `T` is one of `myapp`'s claimed threads → **emitted** (a reply in my thread);
+- `T` is unclaimed and the text starts with `myapp:` → `T` is **claimed** for `myapp` and emitted, with the `myapp:` prefix stripped from the surfaced text;
+- `T` is unclaimed, `myapp` is the dispatcher, and the text starts with **no** registered session name → the dispatcher posts a "which session?" menu to `T` (not emitted as work);
+- `T` is claimed by a **different** session → skipped.
+
+Each emitted JSON event carries both `session_name` and `thread_name`. Routing reuses the same trigger / catch-all rules, resilience, and durable high-water resume as plain `listen`. The session must already exist (`cgc connect NAME`) or `listen --session` fails fast.
+
+A typical multi-agent setup: run `cgc connect` in each repo/branch (the first becomes the dispatcher), then `cgc listen --session <name>` per agent. From your phone you reply inside a session's thread to talk to it, or start a top-level `name: <message>` to open a new thread for it; an unaddressed top-level message gets the dispatcher's menu.
+
 ### `cgc setup`
 
 Print the config file location and the keys required for each operation.
@@ -239,7 +272,8 @@ Both directions use one envelope (defined in `messages.py`). The JSON object:
   "args": [],
   "ts": "2026-06-19T12:00:00Z",
   "correlation_id": null,
-  "thread_name": null
+  "thread_name": null,
+  "session_name": null
 }
 ```
 
@@ -254,6 +288,7 @@ Fields:
 - `ts` — RFC3339 UTC timestamp.
 - `correlation_id` — optional, links a result back to a command.
 - `thread_name` — optional Chat thread resource name (`spaces/.../threads/...`) the message belongs to, surfaced on inbound `cgc listen` events so a consumer knows which thread a message is in; `null` when unthreaded.
+- `session_name` — optional session name a routed event was delivered to by `cgc listen --session NAME`; surfaced so a consumer knows which session owns the message. `null` for non-session (plain) listening.
 
 ### On-the-wire (outbound)
 

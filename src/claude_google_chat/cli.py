@@ -22,16 +22,22 @@ choices, file paths, and config-derived values) are wired from
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import replace
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
 from claude_google_chat import __version__
+
+if TYPE_CHECKING:
+    from claude_google_chat.sessionops import ThreadSender
+    from claude_google_chat.sessions import SessionRegistry
 from claude_google_chat.completion import (
     SUPPORTED_COMPLETION_SHELLS,
     complete_config_key,
+    complete_session_name,
     complete_shell,
     complete_space_id,
     complete_status,
@@ -69,9 +75,14 @@ config_app = typer.Typer(
 )
 auth_app = typer.Typer(help="Manage Google OAuth credentials.", no_args_is_help=True)
 chat_app = typer.Typer(help="Send messages to Google Chat.", no_args_is_help=True)
+session_app = typer.Typer(
+    help="Inspect the local session registry (list).",
+    no_args_is_help=True,
+)
 app.add_typer(config_app, name="config")
 app.add_typer(auth_app, name="auth")
 app.add_typer(chat_app, name="chat")
+app.add_typer(session_app, name="session")
 
 
 def _version_callback(value: bool) -> None:
@@ -285,6 +296,131 @@ def setup() -> None:
     typer.echo("use 'cgc config set <key> <value>' to populate")
 
 
+def _session_registry(config: Config) -> SessionRegistry:
+    """Build the file-backed session registry from ``config.sessions_file``."""
+    from pathlib import Path
+
+    from claude_google_chat.sessions import FileSessionRegistry
+
+    assert config.sessions_file is not None  # always resolved by Config.load
+    return FileSessionRegistry(Path(config.sessions_file))
+
+
+def _webhook_thread_sender(config: Config) -> ThreadSender:
+    """Build a (text, thread_key) -> thread.name sender backed by the webhook."""
+    from claude_google_chat.chat import send_webhook
+
+    def _send(text: str, thread_key: str) -> str:
+        created = send_webhook(
+            config,
+            ChatMessage(kind="status", status="info", text=text),
+            thread_key=thread_key,
+        )
+        if not created:
+            raise RuntimeError(
+                "threaded webhook send returned no thread.name; cannot bind the session thread"
+            )
+        return created
+
+    return _send
+
+
+@app.command("connect")
+def connect(
+    name: str | None = typer.Argument(
+        None,
+        help=(
+            "Session NAME. Omit to derive a stable name from the git repo + branch "
+            "+ a short hash of the current directory."
+        ),
+        autocompletion=complete_session_name,
+    ),
+    space_id: str | None = typer.Option(
+        None,
+        "--space",
+        help="Shared Chat space (spaces/...). Defaults to the configured space_id.",
+        autocompletion=complete_space_id,
+    ),
+    dispatcher: bool = typer.Option(
+        False,
+        "--dispatcher",
+        help=(
+            "Mark this session as the dispatcher (answers unrouted new threads with "
+            "a menu). The first session connected auto-becomes the dispatcher."
+        ),
+    ),
+) -> None:
+    """Connect a session: create/reuse its primary thread and register it.
+
+    Idempotent: reconnecting an existing NAME reuses its registry entry and
+    primary thread (no duplicate post). Requires ``webhook_url`` (to open the
+    thread) and a resolvable space.
+    """
+    from claude_google_chat.sessionops import connect_session, connect_summary
+
+    config = Config.load(require=("webhook_url",))
+    try:
+        session = connect_session(
+            config,
+            name=name,
+            space_id=space_id,
+            dispatcher=dispatcher,
+            registry=_session_registry(config),
+            sender=_webhook_thread_sender(config),
+            cwd=os.getcwd(),
+        )
+    except (ValueError, KeyError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(connect_summary(session))
+
+
+@session_app.command("list")
+def session_list() -> None:
+    """List registered sessions, their threads, and which is the dispatcher."""
+    from claude_google_chat.sessionops import format_session_line, list_sessions
+
+    config = Config.load()
+    sessions = list_sessions(_session_registry(config))
+    if not sessions:
+        typer.echo("no sessions connected; run 'cgc connect' to create one")
+        return
+    for session in sessions:
+        typer.echo(format_session_line(session))
+
+
+@app.command("disconnect")
+def disconnect(
+    name: str = typer.Argument(
+        ...,
+        help="Session NAME to disconnect (remove from the registry).",
+        autocompletion=complete_session_name,
+    ),
+    notify: bool = typer.Option(
+        False,
+        "--notify",
+        help="Post a 'session disconnected' note to its primary thread before removal.",
+    ),
+) -> None:
+    """Disconnect a session, removing it and re-electing a dispatcher if needed."""
+    from claude_google_chat.sessionops import disconnect_session
+
+    config = Config.load()
+    sender = _webhook_thread_sender(config) if notify else None
+    try:
+        disconnect_session(
+            config,
+            name=name,
+            registry=_session_registry(config),
+            sender=sender,
+            notify=notify,
+        )
+    except KeyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"disconnected {name}")
+
+
 @app.command("listen")
 def listen(
     once: bool = typer.Option(False, "--once", help="Drain pending messages and exit."),
@@ -309,6 +445,17 @@ def listen(
             autocompletion=complete_thread,
         ),
     ] = None,
+    session: str | None = typer.Option(
+        None,
+        "--session",
+        help=(
+            "Route inbound messages for a connected session NAME: emit replies in "
+            "its claimed threads, claim+emit a new 'NAME:' thread, and (if it is the "
+            "dispatcher) answer truly-unrouted new threads with a menu. The session "
+            "must already exist ('cgc connect NAME')."
+        ),
+        autocompletion=complete_session_name,
+    ),
 ) -> None:
     """Run the inbound listener, emitting one JSON line per new message."""
     from claude_google_chat.listener import run
@@ -320,7 +467,7 @@ def listen(
         threads=tuple(thread) if thread else None,
     )
     config.require_keys(("space_id", "oauth_client_file"))
-    raise typer.Exit(code=run(config, once=once))
+    raise typer.Exit(code=run(config, once=once, session=session))
 
 
 @app.command("clear")

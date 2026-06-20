@@ -34,6 +34,7 @@ from claude_google_chat.config import (
     Config,
     _parse_bool,
     _redact,
+    default_sessions_path,
     default_state_path,
     default_token_path,
     merge_and_write_config,
@@ -106,6 +107,28 @@ def test_state_file_explicit_value_wins(write_config_file: Callable[..., Path]) 
     path = write_config_file(state_file="/custom/listen-state.json")
     config = Config.load(path=path, env={})
     assert config.state_file == "/custom/listen-state.json"
+
+
+def test_sessions_file_defaults_to_config_dir_path(
+    write_config_file: Callable[..., Path],
+) -> None:
+    """An unset ``sessions_file`` resolves to the default session-registry path."""
+    path = write_config_file(space_id="spaces/AAAA")
+    config = Config.load(path=path, env={})
+    assert config.sessions_file == str(default_sessions_path())
+
+
+def test_sessions_file_explicit_value_wins(write_config_file: Callable[..., Path]) -> None:
+    path = write_config_file(sessions_file="/custom/sessions.json")
+    config = Config.load(path=path, env={})
+    assert config.sessions_file == "/custom/sessions.json"
+
+
+def test_sessions_file_env_override_wins() -> None:
+    config = Config.load(
+        path=Path("/nonexistent.toml"), env={"CGC_SESSIONS_FILE": "/env/sessions.json"}
+    )
+    assert config.sessions_file == "/env/sessions.json"
 
 
 def test_max_consecutive_errors_coerced_to_int_from_env() -> None:
