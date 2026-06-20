@@ -1,0 +1,26 @@
+# claude-google-chat configuration
+#
+# Rendered by Terraform (terraform/main.tf) for service-account (app) auth and
+# event-driven delivery. Do not commit this file: it lives outside the repo,
+# under the cgc OS config directory. Values here mirror the cgc Config schema
+# (src/claude_google_chat/config.py).
+
+# --- Chat app (service-account) identity ---
+project_id            = "${project_id}"
+service_account_email = "${service_account_email}"
+
+# --- Event-driven delivery ---
+# pubsub_topic / pubsub_subscription are empty when event-driven mode is off,
+# in which case the listener falls back to polling on poll_interval.
+pubsub_topic        = "${pubsub_topic}"
+pubsub_subscription = "${pubsub_subscription}"
+
+# --- Chat space ---
+# Filled in here when known at apply time; otherwise set it after the Chat app
+# is added to a space (see manual_next_steps).
+space_id = "${space_id}"
+
+# --- Protocol + listener cadence (non-secret tunables) ---
+trigger_prefix = "${trigger_prefix}"
+poll_interval  = ${poll_interval}
+listen_timeout = ${listen_timeout}

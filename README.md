@@ -31,6 +31,17 @@ Send-only operation needs nothing but an incoming webhook URL. Reading inbound c
 
 ---
 
+## Setup
+
+> **Standing it up from scratch?** Follow the **[Setup Runbook](docs/SETUP.md)** —
+> a brain-dead-simple, fully numbered, zero-to-working guide for the
+> service-account (app-auth) design. Every step is marked
+> **[AUTOMATED: terraform]**, **[AUTOMATED: cgc]**, or **[MANUAL: you]** with the
+> exact command or console clicks, including the one irreducible manual step
+> (the Google Chat API Configuration page) and `terraform destroy` teardown.
+
+---
+
 ## Quickstart
 
 ```bash
@@ -189,6 +200,7 @@ Data flow: Claude Code → `/claude-google-chat:*` command → `cgc` CLI → Goo
 
 ## Documentation
 
+- [Setup Runbook](docs/SETUP.md) — **start here:** numbered zero-to-working guide (terraform + `cgc` + the one manual console step), with a what's-automated-vs-manual table and teardown.
 - [Installation](docs/installation.md) — both install paths plus Google Cloud setup.
 - [Usage](docs/usage.md) — command reference, listener behavior, message examples.
 - [Configuration](docs/configuration.md) — full config table, precedence, secret handling.

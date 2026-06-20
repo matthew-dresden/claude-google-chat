@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
-from claude_google_chat.auth import load_credentials
+from claude_google_chat.auth import load_app_credentials, load_credentials
 from claude_google_chat.config import Config
 from claude_google_chat.messages import ChatMessage, format_message, parse_message
 
@@ -67,11 +67,77 @@ def send_webhook(config: Config, msg: ChatMessage) -> None:
 
 
 def _build_service(config: Config) -> Resource:
-    """Build an authenticated Google Chat API client."""
+    """Build a Google Chat API client using cached user OAuth credentials."""
     from googleapiclient.discovery import build
 
     creds = load_credentials(config)
     return build("chat", "v1", credentials=creds, cache_discovery=False)
+
+
+def build_app_service(config: Config) -> Resource:
+    """Build a Google Chat API client using **service-account (app)** creds.
+
+    Used by ``cgc serve`` so the process reads and posts messages as the Chat
+    app itself rather than as a human user.
+    """
+    from googleapiclient.discovery import build
+
+    creds = load_app_credentials(config)
+    return build("chat", "v1", credentials=creds, cache_discovery=False)
+
+
+def post_message_as_app(
+    config: Config,
+    msg: ChatMessage,
+    *,
+    service: Resource | None = None,
+    thread_key: str | None = None,
+) -> dict[str, Any]:
+    """Post a formatted :class:`ChatMessage` to the space via the Chat API.
+
+    Sends as the Chat app using service-account credentials (no webhook). When
+    ``thread_key`` is provided the reply is threaded under that key so a
+    response stays attached to the triggering message. Returns the created
+    message resource. ``service`` is injectable for tests.
+    """
+    space = _require_space(config)
+    chat = service if service is not None else build_app_service(config)
+    body: dict[str, Any] = {"text": format_message(msg)}
+    request_kwargs: dict[str, Any] = {"parent": space, "body": body}
+    if thread_key is not None:
+        body["thread"] = {"threadKey": thread_key}
+        request_kwargs["messageReplyOption"] = "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD"
+    return chat.spaces().messages().create(**request_kwargs).execute()
+
+
+def list_messages_as_app(
+    config: Config,
+    since: str | None = None,
+    *,
+    service: Resource | None = None,
+    page_size: int = 100,
+) -> list[dict[str, Any]]:
+    """List messages in the space using **service-account (app)** credentials.
+
+    Mirrors :func:`list_messages` but authenticates as the Chat app. ``service``
+    is injectable for tests so no network access is required.
+    """
+    space = _require_space(config)
+    chat = service if service is not None else build_app_service(config)
+
+    request_kwargs: dict[str, Any] = {"parent": space, "pageSize": page_size}
+    if since is not None:
+        request_kwargs["filter"] = f'createTime > "{since}"'
+
+    messages: list[dict[str, Any]] = []
+    request = chat.spaces().messages().list(**request_kwargs)
+    while request is not None:
+        result = request.execute()
+        messages.extend(result.get("messages", []))
+        request = (
+            chat.spaces().messages().list_next(previous_request=request, previous_response=result)
+        )
+    return messages
 
 
 def list_messages(

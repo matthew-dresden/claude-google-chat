@@ -1,0 +1,20 @@
+# Example variable values for the claude-google-chat Terraform module.
+#
+# Copy to terraform.tfvars and edit. Never commit real terraform.tfvars; it is
+# environment-specific. Only project_id is required.
+
+# Required: the GCP project to provision into.
+project_id = "my-gcp-project"
+
+# Optional (defaults shown).
+# region              = "us-central1"
+# service_account_id  = "cgc-chat"
+# enable_event_driven = true
+# trigger_prefix      = "claude-command:"
+# poll_interval       = 2.0
+# listen_timeout      = 0
+# config_output_path  = "~/.config/claude-google-chat/config.toml"
+
+# Optional: set once you know the Chat space id (otherwise add it to config.toml
+# after the app is added to a space).
+# space_id = "spaces/AAAAAAAAAAA"

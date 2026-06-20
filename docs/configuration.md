@@ -46,13 +46,20 @@ The config file is read with the Python 3.11+ stdlib `tomllib` module. Writes fr
 | `oauth_client_file` | `CGC_OAUTH_CLIENT_FILE` | yes (for read/listen) | — | string (path) | Path to Google OAuth client secrets JSON |
 | `token_file` | `CGC_TOKEN_FILE` | no | `<config_dir>/token.json` | string (path) | Cached OAuth user token |
 | `trigger_prefix` | `CGC_TRIGGER_PREFIX` | no | `claude-command:` | string | Inbound command trigger |
-| `poll_interval` | `CGC_POLL_INTERVAL` | no | `2.0` | float (seconds) | Listener poll interval |
-| `listen_timeout` | `CGC_LISTEN_TIMEOUT` | no | `0` | float (seconds) | Listener idle timeout (`0` = run forever) |
+| `poll_interval` | `CGC_POLL_INTERVAL` | no | `2.0` | float (seconds) | Listener/responder poll interval |
+| `listen_timeout` | `CGC_LISTEN_TIMEOUT` | no | `0` | float (seconds) | Listener/responder idle timeout (`0` = run forever) |
+| `service_account_file` | `CGC_SERVICE_ACCOUNT_FILE` | yes (for bootstrap/serve) | — | string (path) | Chat **app** service-account JSON key (app auth) |
+| `project_id` | `CGC_PROJECT_ID` | no | — | string | GCP project id (used to qualify a bare `pubsub_topic`) |
+| `pubsub_topic` | `CGC_PUBSUB_TOPIC` | yes (for bootstrap) | — | string | Pub/Sub topic for Chat events (bare id or `projects/<p>/topics/<t>`) |
+| `space_display_name` | `CGC_SPACE_DISPLAY_NAME` | no | — | string | Name used when `bootstrap` *creates* a space (when no `space_id`) |
+| `owner_email` | `CGC_OWNER_EMAIL` | no | — | string | If set, `serve` only responds to messages from this sender |
 
 ### Which keys are required when
 
 - **Send only** (outbound webhook): `webhook_url`.
-- **Read / listen** (inbound API): `space_id` and `oauth_client_file` (plus a cached token from `cgc auth login`).
+- **Read / listen** (inbound API, user OAuth): `space_id` and `oauth_client_file` (plus a cached token from `cgc auth login`).
+- **Bootstrap** (service-account/app auth, the steps Terraform can't do): `service_account_file` and `pubsub_topic` (plus either `space_id` to join or `space_display_name` to create). `project_id` is required only when `pubsub_topic` is a bare id.
+- **Serve** (always-listening responder, app auth): `service_account_file` and `space_id`. `owner_email` optionally restricts which sender triggers replies.
 
 Operations request exactly the keys they need. For example, a read operation loads config with `Config.load(require=("space_id",))`; if `space_id` is missing, the loader raises a clear error naming the missing key and exits non-zero.
 
@@ -84,7 +91,7 @@ export CGC_LISTEN_TIMEOUT="0"
 
 ## Secret handling
 
-- **Secrets are never echoed.** `cgc config show` masks the webhook URL token and never prints token-file contents.
+- **Secrets are never echoed.** `cgc config show` masks the webhook URL token, the cached token path, and the `service_account_file` path, and never prints their contents.
 - **Secrets are never logged.** No module logs the webhook URL, OAuth client contents, or user token.
 - **The cached OAuth token** is written with restrictive (`0600`) file permissions by `cgc auth login`.
 - **Nothing secret is stored in the repo.** Config lives in the OS config dir; `token.json`, `.env`, and `*.local.*` are gitignored.
