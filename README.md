@@ -111,16 +111,9 @@ cgc --help
 pipx installs the CLI into its own isolated environment and puts `cgc` on your `PATH` — the recommended way to run a Python command-line tool.
 
 <details>
-<summary>Alternatives — uv, pip, or from source</summary>
+<summary>From source (for development)</summary>
 
 ```bash
-# uv
-uv tool install claude-google-chat
-
-# pip
-pip install claude-google-chat
-
-# from source
 git clone https://github.com/matthew-dresden/claude-google-chat
 cd claude-google-chat
 uv sync && uv run cgc --help
