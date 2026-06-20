@@ -220,43 +220,51 @@ Dynamic completers never crash your shell: any error simply yields no suggestion
 
 ## Plugin commands (inside Claude Code)
 
-### `/claude-google-chat:chat-setup`
+The plugin is **session-bound**: each Claude Code instance connects as a named session in one shared space, listens for messages routed to it, and replies in-thread. See the `/claude-google-chat:google-chat` skill for the full protocol.
 
-Interactive one-time setup. It:
+### `/claude-google-chat:setup`
+
+One-time onboarding. It:
 
 1. Verifies `cgc` is on your `PATH` (and prints install instructions if not).
-2. Shows current config and which env vars / config keys are required.
-3. Walks you through `CGC_WEBHOOK_URL`, `CGC_SPACE_ID`, the OAuth client file path, and `CGC_TRIGGER_PREFIX`, writing them via `cgc config set`.
-4. Runs `cgc auth login` if inbound reading is desired.
-5. Verifies with a test send (success prints `sent`; failure exits non-zero with the status code).
+2. Runs the guided `cgc setup` wizard (project, Chat API, ADC-first auth, webhook, end-to-end verify) — idempotent and resumable.
+3. Runs `cgc doctor` to print a RED/GREEN prerequisite checklist with the exact fix per red line.
 
 ```
-/claude-google-chat:chat-setup
-/claude-google-chat:chat-setup --space spaces/AAAA
+/claude-google-chat:setup
 ```
 
-### `/claude-google-chat:chat-send`
+### `/claude-google-chat:connect`
+
+Connect this instance as a named session and start listening for messages routed to it.
+
+```
+/claude-google-chat:connect            # derive a stable NAME from git repo + branch + cwd
+/claude-google-chat:connect myapp      # explicit NAME
+```
+
+It runs `cgc doctor` (stops on any red), then `cgc connect [name]` to register the session and open its primary thread, then arms `cgc listen --session <name>`. For each emitted JSON message event (carrying `text` + `thread_name`) Claude does the requested work and replies in-thread via `cgc chat send --thread-key <thread_name>`. The first session connected becomes the **dispatcher**, which automatically answers truly-unrouted new threads with a "which session?" menu (those are not emitted as work). Claude then tells you the session name and how to talk to it (reply in its thread, or start a new thread with `name: ...`).
+
+### `/claude-google-chat:disconnect`
+
+Remove a session from the registry.
+
+```
+/claude-google-chat:disconnect myapp
+```
+
+This runs `cgc disconnect myapp`; if it was the dispatcher and others remain, a survivor is promoted. An unknown NAME fails fast.
+
+### `/claude-google-chat:send`
 
 Send a status ping. The first token is the status; the rest is the text.
 
 ```
-/claude-google-chat:chat-send success Build is green
-/claude-google-chat:chat-send working Running the integration suite
+/claude-google-chat:send success Build is green
+/claude-google-chat:send working Running the integration suite
 ```
 
-This runs `cgc chat send --status "<status>" --text "<text>"`; on success it prints `sent`, and on failure it exits non-zero with the HTTP status code and a redacted URL.
-
-### `/claude-google-chat:chat-listener`
-
-Start the listener and surface inbound commands.
-
-```
-/claude-google-chat:chat-listener
-/claude-google-chat:chat-listener --once
-/claude-google-chat:chat-listener --timeout 600
-```
-
-This runs `cgc listen <args>`. Each emitted line is a structured JSON message. `--once` drains pending messages and exits (useful in a `Stop` hook or in CI). Timeouts are env-driven (`CGC_LISTEN_TIMEOUT`) and never `sleep`-based.
+This runs `cgc chat send --status "<status>" --text "<text>"`; on success it prints `sent`, and on failure it exits non-zero with the HTTP status code and a redacted URL. When replying within a session thread, the command passes the event's `thread_name` as `--thread-key` so the reply lands in that thread.
 
 ---
 

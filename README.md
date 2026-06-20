@@ -84,10 +84,11 @@ cgc completion bash --install   # or: zsh / fish, or `cgc --install-completion`
 
 Tab completion covers commands, options, and dynamic values (config keys, `--status` labels, shell names, file paths, and config-derived `space_id`/`trigger_prefix`). See the [Shell completion guide](docs/SHELL_COMPLETION.md) for bash/zsh setup (auto-updating and static-file installs) and prerequisites.
 
-From inside Claude Code, run the setup command and you are ready:
+From inside Claude Code, run the setup command, then connect a session and you are ready:
 
 ```
-/claude-google-chat:chat-setup
+/claude-google-chat:setup
+/claude-google-chat:connect
 ```
 
 ---
@@ -105,7 +106,7 @@ From inside Claude Code, run the setup command and you are ready:
 
 The marketplace name and the plugin name are both `claude-google-chat`, so the install selector is `claude-google-chat@claude-google-chat`.
 
-The plugin commands invoke the `cgc` CLI, so install the CLI as well (below). The `/claude-google-chat:chat-setup` command checks for `cgc` on your `PATH` and tells you how to install it if it is missing.
+The plugin commands invoke the `cgc` CLI, so install the CLI as well (below). The `/claude-google-chat:setup` command checks for `cgc` on your `PATH` and tells you how to install it if it is missing.
 
 ### As a CLI (Python)
 
@@ -175,43 +176,48 @@ Secrets are never echoed: `cgc config show` masks the webhook token and token-fi
 
 ## Usage
 
+The plugin is **session-bound**: each Claude Code instance connects as a named session in one shared Chat space, with a thread per session (and a session owns multiple threads), name-prefix routing for new threads, and a dispatcher menu for unrouted messages.
+
 ### Setup (inside Claude Code)
 
 ```
-/claude-google-chat:chat-setup
+/claude-google-chat:setup
 ```
 
-Walks you through providing the webhook URL, space id, OAuth client file, and trigger prefix; writes them to the user config dir via `cgc config set`; optionally runs `cgc auth login`; and verifies with a test send.
+Runs the guided `cgc setup` wizard (project, Chat API, ADC-first auth, webhook, end-to-end verify) and `cgc doctor` to diagnose any red prerequisites. One-time; idempotent and resumable.
 
-### Send a status ping
+### Connect a session and listen (inside Claude Code)
 
 ```
-/claude-google-chat:chat-send success Build is green
+/claude-google-chat:connect            # derive a stable NAME from git repo + branch + cwd
+/claude-google-chat:connect myapp      # explicit NAME
 ```
 
-or directly with the CLI:
+`connect` runs `cgc doctor` (stops on any red), `cgc connect [name]` to register the session and open its primary thread, then arms `cgc listen --session <name>`. For each emitted JSON message event (carrying `text` + `thread_name`) Claude does the requested work and replies in-thread with `cgc chat send --thread-key <thread_name>`. The first session connected becomes the **dispatcher**, which answers unrouted new threads with a "which session?" menu.
+
+To talk to a session from your phone: reply inside its thread, or start a new thread with a top-level `name: <message>`.
+
+### Send a status ping (inside Claude Code)
+
+```
+/claude-google-chat:send success Build is green
+```
+
+or directly with the CLI (add `--thread-key <thread_name>` to reply within a session thread):
 
 ```bash
 cgc chat send --status working --text "Running tests"
 ```
 
-### Start the listener
+### Disconnect a session (inside Claude Code)
 
 ```
-/claude-google-chat:chat-listener
+/claude-google-chat:disconnect myapp
 ```
 
-or directly:
+Runs `cgc disconnect myapp`, removing it from the registry (and promoting a new dispatcher if needed).
 
-```bash
-cgc listen                 # run forever (idle timeout from CGC_LISTEN_TIMEOUT)
-cgc listen --once          # drain currently-pending messages and exit (for hooks/CI)
-cgc listen --timeout 300   # exit non-zero if idle for 300s
-```
-
-Each emitted line is a structured JSON message. Inbound messages are surfaced when their text starts with the configured trigger prefix (default `claude:`).
-
-### Sessions (multi-instance routing)
+### Sessions directly with the CLI
 
 ```bash
 cgc connect myapp            # open a session + its primary thread (first = dispatcher)
@@ -240,7 +246,8 @@ The CLI exposes message management through the Chat API (used by the listener an
 - `resilience.py` — transient-vs-fatal poll-error classification.
 - `state.py` — durable high-water `StateStore` so a restart resumes instead of re-emitting.
 - `listener.py` — event/poll-driven listener with env-driven cadence and idle timeout (no `sleep` as a readiness primitive).
-- `cli.py` — Typer app exposing `cgc` (`setup`, `doctor`, `config init|show|get|set`, `auth login`, `chat send`, `listen`, `clear`, `status`, `completion`).
+- `cli.py` — Typer app exposing `cgc` (`setup`, `doctor`, `connect`, `disconnect`, `session list`, `config init|show|get|set`, `auth login`, `chat send`, `listen`, `clear`, `status`, `completion`).
+- `sessions.py` / `sessionops.py` / `sessionrouter.py` — the session layer: pure session registry + routing decision, connect/list/disconnect orchestration, and the routing-aware `cgc listen --session` message handler.
 - `setup.py` / `doctor.py` / `probes.py` / `errors.py` — the foolproof onboarding wizard (`cgc setup`), the RED/GREEN diagnostics checklist (`cgc doctor`), the injectable gcloud/auth/network probe seam, and the shared error-mapping layer that turns Google API failures into actionable, secret-free messages.
 - `__main__.py` — `python -m claude_google_chat` entry point.
 

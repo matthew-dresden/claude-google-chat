@@ -61,15 +61,16 @@ The marketplace name and the plugin name are both `claude-google-chat`, so the i
 
 After installation you have these commands:
 
-- `/claude-google-chat:chat-setup` — interactive configuration helper.
-- `/claude-google-chat:chat-send` — send a structured status ping.
-- `/claude-google-chat:chat-listener` — start the inbound listener.
+- `/claude-google-chat:setup` — guided onboarding (`cgc setup` + `cgc doctor`).
+- `/claude-google-chat:connect` — connect this instance as a named session and listen for messages routed to it.
+- `/claude-google-chat:disconnect` — remove a session from the registry.
+- `/claude-google-chat:send` — send a structured status ping (optionally into a session thread).
 
 And a skill:
 
-- `/claude-google-chat:google-chat` — documents the ChatOps protocol so Claude can read and produce structured messages.
+- `/claude-google-chat:google-chat` — documents the session-bound ChatOps protocol so Claude can route, read, and produce structured messages.
 
-The commands invoke the `cgc` CLI. If `cgc` is not on your `PATH`, `/claude-google-chat:chat-setup` prints the install commands from step 1 and stops.
+The commands invoke the `cgc` CLI. If `cgc` is not on your `PATH`, `/claude-google-chat:setup` prints the install commands from step 1 and stops.
 
 ---
 

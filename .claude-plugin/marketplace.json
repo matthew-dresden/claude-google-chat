@@ -13,7 +13,7 @@
     {
       "name": "claude-google-chat",
       "source": "./",
-      "description": "Two-way Google Chat ChatOps for Claude Code: outbound status pings via incoming webhook, inbound commands via the Chat API, an event-driven listener, and a structured message protocol.",
+      "description": "Session-bound two-way Google Chat ChatOps for Claude Code: connect/disconnect named sessions in one shared space (thread-per-session, name-prefix routing, dispatcher menu), reply in-thread, send status pings, and onboard with cgc setup. Commands: connect, disconnect, send, setup.",
       "version": "0.1.0",
       "author": {
         "name": "Matthew Dresden",
