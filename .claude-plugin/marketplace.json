@@ -3,7 +3,7 @@
   "name": "claude-google-chat",
   "owner": {
     "name": "Matthew Dresden",
-    "email": "matthew@brimcapitalgroup.com",
+    "email": "admin@dresdencraft.com",
     "url": "https://github.com/matthew-dresden"
   },
   "metadata": {
@@ -17,7 +17,7 @@
       "version": "0.1.0",
       "author": {
         "name": "Matthew Dresden",
-        "email": "matthew@brimcapitalgroup.com"
+        "email": "admin@dresdencraft.com"
       },
       "license": "Apache-2.0",
       "homepage": "https://github.com/matthew-dresden/claude-google-chat",
