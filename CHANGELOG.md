@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Automated tag release pipeline** (`.github/workflows/release.yml`): on push to `main`, re-validates and reads the version from `pyproject.toml` (single source of truth), then cuts an annotated git tag `v<version>` plus a GitHub Release carrying the built `dist/*` artifacts. Idempotent — skips cleanly when the tag already exists, so it cuts no new release without a version bump.
+- **PyPI publish workflow** (`.github/workflows/publish.yml`) using `pypa/gh-action-pypi-publish` with **OIDC Trusted Publishing** (no stored token) by default, plus a documented API-token fallback. Triggers only on a published GitHub Release or manual dispatch — never on the merge-validation path — and runs in a GitHub Environment named `pypi`. Inert until the maintainer completes one of the two PyPI setup options documented in `docs/installation.md`.
+- **Makefile `publish` target** for validated manual publishing: `uv build` + `uvx twine check` + `uv publish`, reading the token from `UV_PUBLISH_TOKEN` (never hardcoded). Added `format-check` and `distcheck` targets.
+- **`docs/usage.md`**: "Phone notifications (avoid duplicate alerts)" section covering the standalone Google Chat app vs. Gmail Chat surfaces and how to disable one to avoid duplicate phone alerts.
+
+### Changed
+
+- **CI** (`.github/workflows/ci.yml`) now includes a version-consistency gate (`pyproject.toml` vs `src/claude_google_chat/__init__.py:__version__`) and routes format checking through the `make format-check` target.
+- **`docs/installation.md`** and **`docs/architecture.md`** document the build/release/publish pipeline, how to cut a release, how to finish PyPI setup (Trusted Publisher or API token), and the manual-publish path. `docs/installation.md` also notes the `cgc` console-command name overlap with an unrelated PyPI package and the unambiguous `python -m claude_google_chat` invocation.
+
 ## [0.1.0] - 2026-06-19
 
 ### Added

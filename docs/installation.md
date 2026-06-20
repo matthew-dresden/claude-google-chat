@@ -55,6 +55,8 @@ Verify:
 cgc --version
 ```
 
+> **Console-command name note:** the CLI installs a console command named `cgc`. An **unrelated** PyPI package is also named `cgc` and installs a command of the same name. The two are unlikely to be installed together, but if you already use that other `cgc` tool, whichever package is later on your `PATH` wins. The Python **distribution** name (`claude-google-chat`) does not collide; only the short command can. You can always invoke this tool unambiguously as `python -m claude_google_chat …` (or `uv run cgc …` from a source checkout).
+
 ---
 
 ## 2. Install the Claude Code plugin
@@ -144,6 +146,52 @@ cgc listen --once                                # drains pending messages and e
 ```
 
 A successful send returns an HTTP 2xx. If anything required is missing, the CLI fails fast with a clear message naming the missing key — it never silently falls back to a default for a secret.
+
+---
+
+## 5. Releases and PyPI publishing (maintainers)
+
+The project ships from a single codebase via three GitHub Actions workflows (uv + hatchling):
+
+- **`.github/workflows/ci.yml`** — runs on every pull request and push to `main`: install, lint, format check, typecheck, version-consistency check (`pyproject.toml` vs `src/claude_google_chat/__init__.py`), manifest validation, tests, and a `uv build`. This is the merge-validation gate; it never touches PyPI.
+- **`.github/workflows/release.yml`** — runs on push to `main`. It re-validates, reads the version from `pyproject.toml` (the single source of truth), and if the tag `v<version>` does **not** already exist it builds + `twine check`s the artifacts, cuts an **annotated** git tag `v<version>`, and creates a **GitHub Release** carrying the built `dist/*`. It is **idempotent**: if the tag already exists it is a clean no-op, so re-running on `main` without a version bump cuts nothing. (Version `0.1.0` / tag `v0.1.0` already exists.)
+- **`.github/workflows/publish.yml`** — publishes to PyPI with `pypa/gh-action-pypi-publish`. It triggers **only** on a published GitHub Release (or manual `workflow_dispatch` with a `tag` input), so it is **never part of merge CI** — an unconfigured PyPI setup can never block or break pull-request / push-to-main validation. It runs in a GitHub Environment named **`pypi`**.
+
+### Cutting a new release
+
+1. Bump the version in **both** `pyproject.toml` (`[project].version`) and `src/claude_google_chat/__init__.py` (`__version__`). They must match — CI fails otherwise.
+2. Move the relevant `## [Unreleased]` entries in [CHANGELOG.md](../CHANGELOG.md) into a new `## [x.y.z]` section.
+3. Merge to `main`. `release.yml` tags `v<x.y.z>` and creates the GitHub Release, which in turn triggers `publish.yml`.
+
+### Finishing PyPI setup (required once, before automated publish works)
+
+Automated publishing stays inert until you complete **exactly one** of these. Until then, releases still succeed; only the publish step at the end of a release would fail.
+
+**Option A (recommended) — OIDC Trusted Publishing, no stored secret:**
+
+1. On [PyPI](https://pypi.org), own/register the project `claude-google-chat` (or run `make publish` once manually — see below — to create it).
+2. Project → **Settings → Publishing → Add a pending publisher** with:
+   - Publisher: **GitHub**
+   - Owner: **matthew-dresden**
+   - Repository: **claude-google-chat**
+   - Workflow filename: **publish.yml**
+   - Environment name: **pypi**
+3. In GitHub: **Settings → Environments → create `pypi`** (optionally add required reviewers as a human gate). Leave the publish step's `with:` without a `password:` — OIDC authenticates automatically.
+
+**Option B — API token (fallback):**
+
+1. Create a PyPI API token scoped to `claude-google-chat`.
+2. GitHub: **Settings → Environments → `pypi` → add secret `PYPI_API_TOKEN`**.
+3. Uncomment the `password: ${{ secrets.PYPI_API_TOKEN }}` line in `publish.yml`.
+
+### Manual publish (validate before relying on automation)
+
+To validate a publish by hand (e.g. to create the project on PyPI the first time), use the `publish` Makefile target. It builds, `twine check`s, then `uv publish`, reading the token from the environment — never hardcoded:
+
+```bash
+export UV_PUBLISH_TOKEN=pypi-...   # a PyPI API token
+make publish
+```
 
 ---
 

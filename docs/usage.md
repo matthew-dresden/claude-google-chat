@@ -205,3 +205,40 @@ claude-command: rerun-ci --branch main
 ```
 
 See [configuration.md](configuration.md) for tuning the trigger prefix, poll interval, and timeouts.
+
+---
+
+## Phone notifications (avoid duplicate alerts)
+
+When you send status pings to a Google Chat space, that space can reach your phone through **two independent paths**:
+
+1. The **standalone Google Chat app** (the dedicated "Google Chat" mobile app), and
+2. **Gmail's built-in Chat** (Chat is also surfaced inside the Gmail mobile app).
+
+If both are installed and both have notifications enabled, every ping arrives **twice** on your phone. Pick exactly one of the options below so you get a single alert per ping.
+
+### Option A — Use the standalone Google Chat app, silence Gmail's Chat
+
+Use this if you want a dedicated Chat experience separate from email.
+
+1. Install/keep the **Google Chat** app and sign in to the same account.
+2. In the **Google Chat** app, enable notifications for the space you post pings to (open the space → notification settings → "All messages" / "Notify always", as you prefer).
+3. In the **Gmail** app, turn **off** Chat notifications so it does not double-alert:
+   - Gmail → menu → **Settings** → select the account → **Chat notifications** (or **Chat**) → set to **Off** / "None".
+   - On desktop/web: Gmail → ⚙ **See all settings** → **Chat and Meet** → turn **Chat notifications** off, or set **Chat** to "Off" entirely if you do not use Chat inside Gmail.
+
+Result: pings notify only through the standalone Google Chat app.
+
+### Option B — Use Gmail only, remove/silence the standalone app
+
+Use this if you prefer to keep everything inside Gmail and not run a second app.
+
+1. In the **Gmail** app, make sure **Chat** is enabled and Chat notifications are **on** for the space:
+   - Gmail → menu → **Settings** → select the account → **Chat notifications** → **On**, and confirm the space's per-space setting is "All messages".
+2. **Remove or silence the standalone Google Chat app** so it does not also alert:
+   - Either uninstall the **Google Chat** app, or
+   - Open the **Google Chat** app → notification settings → set notifications to **Off** for that account/space.
+
+Result: pings notify only through Gmail.
+
+> The per-space notification level (All messages / Mentions only / Off) lives **inside the space** and is shared by both surfaces, while "which app alerts me" is the **app-level** toggle above. Set the space to "All messages" so pings are delivered, then use the app-level toggles so only **one** app actually rings.
