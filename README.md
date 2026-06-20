@@ -7,7 +7,6 @@
 >
 > - ❌ **Do NOT install it.** Do NOT use it in any project, automation, or production system.
 > - ❌ **Do NOT rely on it.** There are no stability or compatibility guarantees of any kind.
-> - ℹ️ **Why is it public, then?** This repo is public **only** to use GitHub's free features (Actions/CI, Pages, etc.) during development. Public visibility is **not** an endorsement that it works or is ready.
 > - 📝 **The README will be rewritten** and a stable **v1.0.0** release will be cut when — and only when — the project is actually ready for use.
 >
 > **Until a tagged `v1.0.0` release exists, treat everything below as a work-in-progress draft, not instructions you should follow.**
@@ -22,7 +21,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/claude-google-chat.svg)](https://pypi.org/project/claude-google-chat/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](./LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-informational.svg)](./CHANGELOG.md)
+[![Version 0.1.0](https://img.shields.io/badge/version-0.1.0-informational.svg)](CHANGELOG.md)
 
 `claude-google-chat` lets Claude Code and your team exchange **status pings, commands, and results** through a Google Chat space using a single, unambiguous structured message format.
 
@@ -30,6 +29,17 @@
 - **Inbound commands/messages** read from the space via the **Google Chat REST API** (OAuth user credentials).
 - An **event-driven listener** that polls the space and surfaces new messages prefixed with a configurable `claude-command:` trigger.
 - A **structured message format** so Claude Code and humans exchange status, commands, and results unambiguously.
+
+---
+
+## Two ways to run this
+
+There are two authentication paths; pick the one that matches your use case:
+
+1. **Quickstart path — webhook + user OAuth.** Outbound status pings go through an **incoming webhook** (no auth for send-only); inbound reading uses **user OAuth** credentials. Driven by `cgc chat send` and `cgc listen`. Start with the [Quickstart](#quickstart) below and [Installation](docs/installation.md).
+2. **App-auth path — service account.** The bot posts and reads as the **Chat app** itself, authenticated by a **service account**. Infrastructure is provisioned with Terraform, wired up by `cgc bootstrap`, and run with `cgc serve` — no user OAuth and no webhooks. The **[Setup Runbook](docs/SETUP.md)** is the canonical guide for this path.
+
+The two paths share the same CLI, config, and structured message format. The quickstart path is the fastest way to send a ping; the app-auth path is the full two-way integration.
 
 ---
 
@@ -43,7 +53,7 @@ When Claude Code runs long or autonomous tasks, you need a way to (a) see what i
 - Humans reply with `claude-command: <command> [args...]` lines that the listener surfaces back to Claude.
 - The same envelope is used in both directions, so machines and people read the same source of truth.
 
-Send-only operation needs nothing but an incoming webhook URL. Reading inbound commands uses OAuth user credentials scoped to Chat messages. No AWS/SSM dependency. No hardcoded secrets — everything comes from environment variables or a user config file.
+Send-only operation needs nothing but an incoming webhook URL. Reading inbound commands uses OAuth user credentials scoped to Chat messages. No hardcoded secrets — everything comes from environment variables or a user config file.
 
 ---
 
@@ -147,7 +157,7 @@ The user config file lives in your OS config directory (resolved via `platformdi
 | **`token_file`**<br>`CGC_TOKEN_FILE` | Cached OAuth user token (path). Optional · default `<config_dir>/token.json`. |
 | **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude-command:`. |
 | **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
-| **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener idle timeout, seconds (float). Optional · default `0` (run forever). |
+| **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener/responder idle timeout, seconds (float); governs `listen` and `serve`. Optional · default `0` (run forever). |
 
 Secrets are never echoed: `cgc config show` masks the webhook token and token-file contents. See [docs/configuration.md](docs/configuration.md) for details.
 
@@ -201,20 +211,25 @@ The CLI exposes message management through the Chat API (used by the listener an
 
 `claude-google-chat` is one Python package (`claude_google_chat`) plus a thin Claude Code plugin layer.
 
-- `messages.py` — pure, I/O-free structured message envelope (`format_message` / `parse_message`); single source of truth for the protocol.
+- `messages.py` — pure, I/O-free structured message envelope (`format_message` / `parse_message` / `to_jsonl`); single source of truth for the protocol.
+- `validation.py` — pure shared format validators (`validate_space_id`, `validate_create_time`).
 - `config.py` — single config authority; merges file + env, validates, fails fast on missing required values.
-- `auth.py` — Google OAuth (InstalledAppFlow) for read/listen; caches the token with restrictive permissions.
-- `chat.py` — webhook send + Chat API list/delete.
+- `auth.py` — Google user OAuth (InstalledAppFlow) for read/listen and service-account (app) auth for bootstrap/serve; never logs tokens or key material.
+- `chat.py` — webhook send + Chat API list/delete (user OAuth) and post/list as the app (service account).
+- `polling.py` — shared poll primitive (dedup, high-water tracking, idle-timeout loop, JSON-line emit) used by `listener.py` and `serve.py`.
 - `listener.py` — event/poll-driven listener with env-driven cadence and idle timeout (no `sleep` as a readiness primitive).
-- `cli.py` — Typer app exposing `cgc` (`config`, `auth login`, `chat send`, `listen`).
+- `bootstrap.py` — service-account setup Terraform can't do (join/create space, register the Workspace Events subscription, merge config).
+- `serve.py` — always-listening responder that replies to owner messages as the app.
+- `cli.py` — Typer app exposing `cgc` (`config init|show|get|set`, `auth login`, `chat send`, `bootstrap`, `serve`, `listen`, `clear`, `status`, `setup`, `completion`).
+- `__main__.py` — `python -m claude_google_chat` entry point.
 
-Data flow: Claude Code → `/claude-google-chat:*` command → `cgc` CLI → Google Chat (incoming webhook for outbound, Chat REST API for inbound). See [docs/architecture.md](docs/architecture.md) for the full breakdown and diagram.
+Data flow: Claude Code → `/claude-google-chat:*` command → `cgc` CLI → Google Chat (incoming webhook or Chat REST API for the quickstart path; Chat REST API as the service account for the app-auth path). See [docs/architecture.md](docs/architecture.md) for the full breakdown and diagram.
 
 ---
 
 ## Documentation
 
-- [Setup Runbook](docs/SETUP.md) — **start here:** numbered zero-to-working guide (terraform + `cgc` + the one manual console step), with a what's-automated-vs-manual table and teardown.
+- [Setup Runbook](docs/SETUP.md) — **canonical app-auth guide:** numbered zero-to-working runbook (terraform + `cgc bootstrap`/`serve` + the one manual console step), with a what's-automated-vs-manual table and teardown.
 - [Installation](docs/installation.md) — both install paths plus Google Cloud setup.
 - [Usage](docs/usage.md) — command reference, listener behavior, message examples.
 - [Configuration](docs/configuration.md) — full config table, precedence, secret handling.

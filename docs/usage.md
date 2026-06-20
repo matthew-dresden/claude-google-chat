@@ -67,6 +67,26 @@ cgc listen --space-id spaces/AAAA   # override the configured space for this run
 
 Each new message is emitted as a single JSON line to stdout. Only messages whose text starts with the configured trigger prefix (default `claude-command:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing.
 
+### `cgc setup`
+
+Print the config file location and the keys required for each operation.
+
+```bash
+cgc setup
+```
+
+### `cgc bootstrap`
+
+Service-account (app-auth) setup that Terraform cannot do: join or create the
+Chat space, register the Workspace Events `message.created` subscription to the
+Pub/Sub topic, and merge the discovered values into `config.toml`. Requires
+`service_account_file` and `pubsub_topic`. See the [Setup Runbook](SETUP.md) for
+the full app-auth path.
+
+```bash
+cgc bootstrap
+```
+
 ### `cgc serve`
 
 Run the always-listening responder, replying to owner messages as the app (service-account auth).
@@ -76,6 +96,15 @@ cgc serve                           # run forever
 cgc serve --once                    # handle pending owner messages once and exit
 cgc serve --timeout 600             # exit non-zero if idle for 600 seconds
 cgc serve --space-id spaces/AAAA    # override the configured space for this run
+```
+
+### `cgc status`
+
+Report which configuration values are present (secrets masked) and whether the
+send and read paths are ready.
+
+```bash
+cgc status
 ```
 
 ### `cgc clear`
@@ -146,7 +175,7 @@ Interactive one-time setup. It:
 2. Shows current config and which env vars / config keys are required.
 3. Walks you through `CGC_WEBHOOK_URL`, `CGC_SPACE_ID`, the OAuth client file path, and `CGC_TRIGGER_PREFIX`, writing them via `cgc config set`.
 4. Runs `cgc auth login` if inbound reading is desired.
-5. Verifies with a test send and confirms a 200.
+5. Verifies with a test send (success prints `sent`; failure exits non-zero with the status code).
 
 ```
 /claude-google-chat:chat-setup
@@ -162,7 +191,7 @@ Send a status ping. The first token is the status; the rest is the text.
 /claude-google-chat:chat-send working Running the integration suite
 ```
 
-This runs `cgc chat send --status "<status>" --text "<text>"` and surfaces the HTTP result.
+This runs `cgc chat send --status "<status>" --text "<text>"`; on success it prints `sent`, and on failure it exits non-zero with the HTTP status code and a redacted URL.
 
 ### `/claude-google-chat:chat-listener`
 

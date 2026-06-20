@@ -1,7 +1,7 @@
 name: Publish to PyPI
 
 # ---------------------------------------------------------------------------
-# PyPI publish (mirrors kanon's method, adapted to uv + hatchling).
+# PyPI publish for a uv + hatchling project.
 #
 # SAFETY: This workflow only runs on RELEASE / TAG events (and manual dispatch).
 # It is NOT part of the pull-request / push-to-main merge-validation path, so it

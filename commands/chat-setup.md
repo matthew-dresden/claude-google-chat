@@ -30,7 +30,10 @@ If the command is not found, the CLI is not installed. Print the following insta
 options and **stop** (do not attempt to proceed without `cgc`):
 
 ```bash
-# uv (recommended)
+# pipx (recommended)
+pipx install claude-google-chat
+
+# or uv tool
 uv tool install claude-google-chat
 
 # or pip
@@ -117,11 +120,12 @@ cgc config set trigger_prefix "claude-command:"
 
 ## 7. Verify
 
-Send a test status message and confirm a `200` (success) response:
+Send a test status message and confirm it succeeds:
 
 ```bash
 cgc chat send --status info --text "claude-google-chat configured"
 ```
 
-Report the HTTP result to the user. If it returns non-2xx, surface the error and
-the redacted URL — do not retry silently.
+On success the command prints `sent` and exits `0`. On failure it exits non-zero
+with the HTTP status code and the redacted webhook URL — surface that to the user
+and do not retry silently.
