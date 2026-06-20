@@ -73,11 +73,50 @@ The commands invoke the `cgc` CLI. If `cgc` is not on your `PATH`, `/claude-goog
 
 ---
 
-## 3. Google Cloud setup
+## 3. Onboarding: `cgc setup` (one command)
 
-You need two things from Google: an **incoming webhook** (for outbound sends) and, if you want inbound reading, an **OAuth client**.
+The fastest path is the guided wizard. It is **idempotent and resumable** — run it as many times as you like; each step is skipped when already satisfied and re-running fixes only what is still missing.
 
-### 3a. Create an incoming webhook (outbound, no OAuth)
+```bash
+cgc setup
+```
+
+It walks every prerequisite, verifying each step before moving on:
+
+1. **gcloud** — detects the `gcloud` CLI. If it is missing, it prints the install link plus console deep-links so you can create a project and enable the API by hand.
+2. **Project** — creates a new Google Cloud project or selects an existing one.
+3. **Chat API** — enables `chat.googleapis.com` and **polls until it reports ENABLED** (an active readiness check, never a fixed wait; the timeout is env-driven via `CGC_SETUP_ENABLE_TIMEOUT` and fails fast).
+4. **Auth — ADC-first** — runs `gcloud auth application-default login` requesting the Chat + identity scopes (so there is **no OAuth client to create**), then probes whether the Chat API accepts that ADC token. If it does, ADC is used. If not, it falls back to a **guided OAuth-client** flow: it prints the exact console deep-links to create a Desktop OAuth client + consent screen, validates the downloaded client-secrets JSON shape, and runs `cgc auth login`. After **either** path it verifies the token carries every required Chat scope and re-auths if not (guarding silent scope-drop).
+5. **Webhook** — prompts for the incoming-webhook URL, validates its shape, and stores it (the token is never echoed).
+6. **Verify end-to-end** — sends a unique test message and reads it back before declaring success. On any failure it prints a concise, actionable error (never a raw traceback or token) naming which step to re-run.
+
+Useful flags:
+
+```bash
+cgc setup --reauth     # only redo authentication
+cgc setup --dry-run    # show the actions that would run, change nothing
+cgc setup --verify     # only run the end-to-end send/read round-trip check
+```
+
+### Diagnose with `cgc doctor`
+
+At any time, run the diagnostics checklist to see exactly what is and is not configured, with the precise fix for each red line:
+
+```bash
+cgc doctor
+```
+
+It prints a `[PASS]`/`[FAIL]` line for every prerequisite (gcloud installed / logged in / project selected / Chat API enabled / OAuth-ADC credentials present & valid / token scopes / webhook & space configured / config file present) and **exits non-zero** if any required check fails, so you can use it as a health gate.
+
+> **One path, always two-way.** There is no longer a separate "send-only" tier: the tool is the single user-OAuth/ADC two-way integration. Outbound status pings still go through the **incoming webhook**, and inbound reading uses the Chat REST API with your **ADC or OAuth user** credentials — `cgc setup` configures both.
+
+---
+
+## 4. Manual Google Cloud setup (alternative to `cgc setup`)
+
+If you prefer to configure things by hand, you need an **incoming webhook** (for outbound sends) and an **ADC or OAuth client** (for inbound reading).
+
+### 4a. Create an incoming webhook (outbound)
 
 1. Open the target **Google Chat space**.
 2. Open the space name menu → **Apps & integrations** → **Manage webhooks** (this requires that incoming webhooks are enabled for your Workspace).
@@ -99,46 +138,53 @@ You need two things from Google: an **incoming webhook** (for outbound sends) an
    export CGC_WEBHOOK_URL="https://chat.googleapis.com/v1/spaces/AAAA/messages?key=...&token=..."
    ```
 
-Send-only operation needs nothing more.
+### 4b. Authenticate for inbound read/listen (ADC-first, OAuth-client fallback)
 
-### 3b. Create an OAuth client (inbound read/listen)
+Reading inbound commands uses the Google Chat REST API. There are two ways to authenticate; `cgc setup` tries them in this order, and you can do either by hand:
 
-Reading inbound commands uses the Google Chat REST API with OAuth user credentials.
+**ADC (recommended, no OAuth client to create):**
+
+```bash
+gcloud auth application-default login \
+  --scopes=https://www.googleapis.com/auth/chat.messages,openid,https://www.googleapis.com/auth/userinfo.email
+cgc config set space_id "spaces/AAAA"
+```
+
+If the Chat API accepts the resulting Application Default Credentials, you are done — there is no OAuth client to register.
+
+**OAuth client (fallback, if ADC is not accepted):**
 
 1. In the [Google Cloud Console](https://console.cloud.google.com/), select or create a project.
 2. Enable the **Google Chat API** for the project.
 3. Configure the **OAuth consent screen** (internal is fine for a single Workspace).
 4. Create an **OAuth client ID** of type **Desktop app**. Download the client secrets JSON.
-5. Point the CLI at it:
+5. Point the CLI at it and complete the installed-app flow once (the user token is cached locally with restrictive permissions):
 
    ```bash
    cgc config set oauth_client_file "/path/to/oauth_client.json"
    cgc config set space_id "spaces/AAAA"
-   ```
-
-6. Complete the installed-app OAuth flow once; the resulting user token is cached locally (with restrictive file permissions):
-
-   ```bash
    cgc auth login
    ```
 
-The OAuth scope requested is `https://www.googleapis.com/auth/chat.messages`. Outbound sends still use the webhook; OAuth is only required for read/listen/delete.
+Either way, the required Chat scope is `https://www.googleapis.com/auth/chat.messages`. Outbound sends still use the webhook; ADC/OAuth is only required for read/listen/delete. (`cgc setup` validates, after either path, that the token actually carries the required scope and re-auths if not.)
 
 ---
 
-## 4. Verify
+## 5. Verify
 
 ```bash
+cgc doctor                                       # RED/GREEN prerequisite checklist
+cgc setup --verify                               # real send + read-back round trip
 cgc config show                                  # masks secrets
 cgc chat send --status info --text "hello from claude-google-chat"
 cgc listen --once                                # drains pending messages and exits
 ```
 
-A successful send prints `sent` and exits `0`; a failed send exits non-zero with the HTTP status code and a redacted URL. If anything required is missing, the CLI fails fast with a clear message naming the missing key — it never silently falls back to a default for a secret.
+`cgc doctor` exits non-zero if any required prerequisite is missing (and names the exact fix). A successful send prints `sent` and exits `0`; a failed send exits non-zero with the HTTP status code and a redacted URL. If anything required is missing, the CLI fails fast with a clear message naming the missing key — it never silently falls back to a default for a secret.
 
 ---
 
-## 5. Releases and PyPI publishing (maintainers)
+## 6. Releases and PyPI publishing (maintainers)
 
 The project ships from a single codebase via three GitHub Actions workflows (uv + hatchling):
 

@@ -117,6 +117,25 @@ All four are configurable via environment variable or the config file; none is h
 
 ---
 
+## Onboarding readiness tunables (`cgc setup`)
+
+When `cgc setup` enables the Google Chat API it **polls for readiness** (an active probe, never a fixed `sleep`) until the API reports ENABLED, failing fast on timeout. Both bounds are env-driven, with documented defaults:
+
+| Setting · env var | Description |
+| --- | --- |
+| **`CGC_SETUP_ENABLE_TIMEOUT`** | Max seconds to wait for `chat.googleapis.com` to report ENABLED before failing fast with an actionable message. Float. Optional · default `120.0`. |
+| **`CGC_SETUP_ENABLE_POLL_INTERVAL`** | Cadence (seconds) between readiness probes while waiting for the API to enable. Float. Optional · default `3.0`. |
+
+These are setup-only tunables (not stored in `config.toml`); set them in the environment if your project takes unusually long to propagate an API-enable. An unparseable value fails fast.
+
+---
+
+## Diagnostics (`cgc doctor`)
+
+`cgc doctor` reads the same resolved configuration plus live probes (gcloud state, credential scopes) and prints a RED/GREEN checklist with the exact fix per red line, exiting non-zero when any required prerequisite is missing. It never echoes secrets (the webhook token is checked for shape only). Use it as a health gate after editing config or before relying on `cgc listen`.
+
+---
+
 ## Resilience and durable state
 
 - `max_consecutive_errors` bounds how many **consecutive** transient poll failures the `listen` loop absorbs before failing fast. Transient errors (socket/connection timeouts, dropped connections, Chat API `408`/`429`/`5xx`) are logged to stderr as a concise, secret-free diagnostic and the loop continues on the normal cadence; a fatal auth/permission error (`401`/`403`) always fails fast immediately. The counter resets on any successful poll.

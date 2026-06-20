@@ -25,8 +25,8 @@
 
 `claude-google-chat` lets Claude Code and your team exchange **status pings, commands, and results** through a Google Chat space using a single, unambiguous structured message format.
 
-- **Outbound status pings** to a Google Chat space via an **incoming webhook** (no OAuth required for send-only).
-- **Inbound commands/messages** read from the space via the **Google Chat REST API** (OAuth user credentials).
+- **Outbound status pings** to a Google Chat space via an **incoming webhook**.
+- **Inbound commands/messages** read from the space via the **Google Chat REST API** (ADC or OAuth user credentials).
 - An **event-driven listener** that polls the space and surfaces new messages prefixed with a configurable `claude:` trigger.
 - A **structured message format** so Claude Code and humans exchange status, commands, and results unambiguously.
 
@@ -36,10 +36,10 @@
 
 A single, session-bound path drives the whole integration:
 
-- **Outbound status pings** go through a Google Chat **incoming webhook** (no auth for send-only), driven by `cgc chat send`.
-- **Inbound commands** are read from the space via the **Google Chat REST API** using your **user OAuth** credentials, surfaced by `cgc listen`.
+- **Outbound status pings** go through a Google Chat **incoming webhook**, driven by `cgc chat send`.
+- **Inbound commands** are read from the space via the **Google Chat REST API** using your **ADC or OAuth user** credentials, surfaced by `cgc listen`.
 
-One CLI, one config, one structured message format in both directions. Start with the [Quickstart](#quickstart) below and [Installation](docs/installation.md).
+One CLI, one config, one structured message format in both directions — always two-way (there is no separate "send-only" tier). Run `cgc setup` once to configure both directions and verify them end to end, and `cgc doctor` any time to diagnose. Start with the [Quickstart](#quickstart) below and [Installation](docs/installation.md).
 
 ---
 
@@ -53,7 +53,7 @@ When Claude Code runs long or autonomous tasks, you need a way to (a) see what i
 - Humans reply with `claude: <command> [args...]` lines that the listener surfaces back to Claude.
 - The same envelope is used in both directions, so machines and people read the same source of truth.
 
-Send-only operation needs nothing but an incoming webhook URL. Reading inbound commands uses OAuth user credentials scoped to Chat messages. No hardcoded secrets — everything comes from environment variables or a user config file.
+The channel is always two-way: outbound pings use an incoming webhook URL and inbound reading uses ADC or OAuth user credentials scoped to Chat messages. `cgc setup` configures both in one guided, self-verifying pass. No hardcoded secrets — everything comes from environment variables or a user config file.
 
 ---
 
@@ -63,20 +63,24 @@ Send-only operation needs nothing but an incoming webhook URL. Reading inbound c
 # 1. Install the CLI (pipx recommended)
 pipx install claude-google-chat
 
-# 2. Configure (webhook URL, space, OAuth, trigger prefix)
-cgc config init
-cgc config set webhook_url "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=...&token=..."
+# 2. Onboard in one command (idempotent, resumable, self-verifying):
+#    project, Chat API, auth (ADC-first), webhook, end-to-end verify.
+cgc setup
+
+#    Diagnose anytime — RED/GREEN checklist with the exact fix per red line:
+cgc doctor
 
 # 3. Send a status ping
 cgc chat send --status success --text "Build is green"
 
-# 4. (optional) Authenticate and start the inbound listener
-cgc auth login
+# 4. Start the inbound listener
 cgc listen
 
 # 5. (optional) Enable shell tab completion
 cgc completion bash --install   # or: zsh / fish, or `cgc --install-completion`
 ```
+
+`cgc setup` is the foolproof path: it detects gcloud (or prints manual console deep-links), creates/selects a project, enables the Chat API (polling until ready), authenticates **ADC-first** with a guided OAuth-client fallback, validates the webhook, and verifies a real send + read-back round trip before declaring success. Re-run it any time — each step is skipped when already done. Prefer to wire things by hand? See [docs/installation.md](docs/installation.md).
 
 Tab completion covers commands, options, and dynamic values (config keys, `--status` labels, shell names, file paths, and config-derived `space_id`/`trigger_prefix`). See the [Shell completion guide](docs/SHELL_COMPLETION.md) for bash/zsh setup (auto-updating and static-file installs) and prerequisites.
 
@@ -236,7 +240,8 @@ The CLI exposes message management through the Chat API (used by the listener an
 - `resilience.py` — transient-vs-fatal poll-error classification.
 - `state.py` — durable high-water `StateStore` so a restart resumes instead of re-emitting.
 - `listener.py` — event/poll-driven listener with env-driven cadence and idle timeout (no `sleep` as a readiness primitive).
-- `cli.py` — Typer app exposing `cgc` (`config init|show|get|set`, `auth login`, `chat send`, `listen`, `clear`, `status`, `setup`, `completion`).
+- `cli.py` — Typer app exposing `cgc` (`setup`, `doctor`, `config init|show|get|set`, `auth login`, `chat send`, `listen`, `clear`, `status`, `completion`).
+- `setup.py` / `doctor.py` / `probes.py` / `errors.py` — the foolproof onboarding wizard (`cgc setup`), the RED/GREEN diagnostics checklist (`cgc doctor`), the injectable gcloud/auth/network probe seam, and the shared error-mapping layer that turns Google API failures into actionable, secret-free messages.
 - `__main__.py` — `python -m claude_google_chat` entry point.
 
 Data flow: Claude Code → `/claude-google-chat:*` command → `cgc` CLI → Google Chat (incoming webhook for outbound sends; Chat REST API with user OAuth for inbound reads). See [docs/architecture.md](docs/architecture.md) for the full breakdown and diagram.
