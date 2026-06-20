@@ -219,7 +219,11 @@ def test_install_completion_line_writes_eval_line(tmp_path: Path) -> None:
     rc = completion.install_completion_line("cgc", "bash", home=tmp_path)
     assert rc == tmp_path / ".bashrc"
     content = rc.read_text(encoding="utf-8")
-    assert 'eval "$(env _CGC_COMPLETE=complete_bash cgc)"' in content
+    # The rc line must request the *source* instruction, never *complete*: the
+    # complete instruction reads COMP_WORDS from the env (only set during a TAB)
+    # and would dump a traceback at shell start-up.
+    assert 'eval "$(env _CGC_COMPLETE=source_bash cgc)"' in content
+    assert "complete_bash" not in content
     assert "# cgc shell completion" in content
 
 
@@ -229,7 +233,7 @@ def test_install_completion_line_is_idempotent(tmp_path: Path) -> None:
     completion.install_completion_line("cgc", "zsh", home=tmp_path)
     after = first.read_text(encoding="utf-8")
     assert before == after
-    assert after.count("_CGC_COMPLETE=complete_zsh") == 1
+    assert after.count("_CGC_COMPLETE=source_zsh") == 1
 
 
 def test_install_completion_line_preserves_existing_rc(tmp_path: Path) -> None:
@@ -238,13 +242,13 @@ def test_install_completion_line_preserves_existing_rc(tmp_path: Path) -> None:
     completion.install_completion_line("cgc", "bash", home=tmp_path)
     content = rc_path.read_text(encoding="utf-8")
     assert "export EXISTING=1" in content
-    assert "_CGC_COMPLETE=complete_bash" in content
+    assert "_CGC_COMPLETE=source_bash" in content
 
 
 def test_install_completion_line_fish_uses_source_form(tmp_path: Path) -> None:
     rc = completion.install_completion_line("cgc", "fish", home=tmp_path)
     content = rc.read_text(encoding="utf-8")
-    assert "env _CGC_COMPLETE=complete_fish cgc | source" in content
+    assert "env _CGC_COMPLETE=source_fish cgc | source" in content
 
 
 def test_install_completion_line_rejects_unsupported(tmp_path: Path) -> None:
