@@ -95,7 +95,7 @@ jobs:
           ref: ${{ needs.validate-version.outputs.tag }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Install dependencies
         shell: bash
