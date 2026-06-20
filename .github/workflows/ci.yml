@@ -37,13 +37,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv run ruff format --check .
+          make format-check
 
       - name: Typecheck
         shell: bash
         run: |
           set -euo pipefail
           make typecheck
+
+      - name: Verify version consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import re
+          import sys
+          import tomllib
+          from pathlib import Path
+
+          toml_version = tomllib.loads(Path("pyproject.toml").read_text())["project"]["version"]
+          init_text = Path("src/claude_google_chat/__init__.py").read_text()
+          match = re.search(r'__version__\s*=\s*["\'](.*?)["\']', init_text)
+          if match is None:
+              sys.exit("__version__ not found in src/claude_google_chat/__init__.py")
+          init_version = match.group(1)
+          if toml_version != init_version:
+              sys.exit(
+                  f"Version mismatch: pyproject.toml ({toml_version}) "
+                  f"!= __init__.py ({init_version})"
+              )
+          print(f"Version consistency verified: {toml_version}")
+          PY
 
       - name: Validate JSON manifests
         shell: bash
