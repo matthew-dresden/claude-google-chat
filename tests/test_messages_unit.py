@@ -20,6 +20,7 @@ is deterministic and assertable.
 from __future__ import annotations
 
 import json
+from typing import cast
 
 import pytest
 
@@ -242,7 +243,9 @@ def test_parse_unclosed_fence_falls_through_to_error() -> None:
 
 def test_parse_none_raises() -> None:
     with pytest.raises(ValueError) as exc_info:
-        parse_message(None)  # type: ignore[arg-type]
+        # Deliberately exercise the None-guard via a typed escape hatch (no
+        # suppression comment): cast keeps the call type-clean.
+        parse_message(cast(str, None))
     assert "None" in str(exc_info.value)
 
 

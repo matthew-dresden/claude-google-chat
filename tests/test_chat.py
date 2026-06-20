@@ -137,6 +137,21 @@ def test_list_messages_as_app_applies_since_filter(
     assert fake_chat_service.list_calls[0]["filter"] == f'createTime > "{since}"'
 
 
+def test_list_messages_as_app_rejects_malformed_since(
+    make_config: Any,
+    fake_chat_service: Any,
+) -> None:
+    """A non-RFC3339 ``since`` fails fast instead of being injected into filter."""
+    config = make_config()
+    with pytest.raises(ValueError) as exc_info:
+        chat.list_messages_as_app(
+            config, since='2026" OR createTime > "1970', service=fake_chat_service
+        )
+    assert "createTime" in str(exc_info.value)
+    # No request was issued with the malformed value.
+    assert fake_chat_service.list_calls == []
+
+
 def test_list_messages_as_app_paginates(
     make_config: Any,
     fake_chat_service: Any,

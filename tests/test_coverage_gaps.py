@@ -312,7 +312,7 @@ def test_create_subscription_reraises_unrelated_http_error() -> None:
 
 
 def test_create_subscription_maps_not_configured_error() -> None:
-    """A NOT_FOUND error from subscriptions.create surfaces the instructions."""
+    """A 403 PERMISSION_DENIED from subscriptions.create surfaces the instructions."""
 
     class _ErroringEvents:
         def subscriptions(self) -> _ErroringEvents:
@@ -322,7 +322,7 @@ def test_create_subscription_maps_not_configured_error() -> None:
             return self
 
         def execute(self) -> Any:
-            raise _http_error(404, "NOT_FOUND: Chat app")
+            raise _http_error(403, "PERMISSION_DENIED: caller does not have permission")
 
     config = _config()
     with pytest.raises(ChatAppNotConfiguredError):

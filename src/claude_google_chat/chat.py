@@ -7,7 +7,7 @@ All network failures fail fast with the HTTP status and a redacted URL.
 
 from __future__ import annotations
 
-import re
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -15,14 +15,10 @@ import requests
 from claude_google_chat.auth import load_app_credentials, load_credentials
 from claude_google_chat.config import Config
 from claude_google_chat.messages import ChatMessage, format_message, parse_message
+from claude_google_chat.validation import validate_create_time, validate_space_id
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
-
-# Chat space resource ids look like ``spaces/AAAA...``.
-_SPACE_RE = re.compile(r"^spaces/[A-Za-z0-9_-]+$")
-
-_WEBHOOK_TIMEOUT_SECONDS = 30
 
 
 def _redact_url(url: str) -> str:
@@ -31,14 +27,15 @@ def _redact_url(url: str) -> str:
 
 
 def _require_space(config: Config) -> str:
-    """Return a validated space id, raising on absence or bad format."""
-    if not config.space_id:
-        raise ValueError(
-            "missing required config value 'space_id' (set CGC_SPACE_ID or add it to config.toml)"
-        )
-    if not _SPACE_RE.match(config.space_id):
-        raise ValueError(f"invalid space id {config.space_id!r}; expected form 'spaces/<id>'")
-    return config.space_id
+    """Return a validated space id, raising on absence or bad format.
+
+    Reuses :meth:`Config.require_keys` for the missing-value message (single
+    source of truth, including the env-var hint) and the shared
+    :func:`validate_space_id` for the format check.
+    """
+    config.require_keys(("space_id",))
+    assert config.space_id is not None  # require_keys guarantees a non-empty value
+    return validate_space_id(config.space_id)
 
 
 def send_webhook(config: Config, msg: ChatMessage) -> None:
@@ -46,18 +43,16 @@ def send_webhook(config: Config, msg: ChatMessage) -> None:
 
     Raises ``ValueError`` if the webhook is unconfigured and
     ``requests.HTTPError`` (with a redacted URL) on any non-2xx response.
+    The HTTP timeout is config-driven (``webhook_timeout`` / ``CGC_WEBHOOK_TIMEOUT``).
     """
-    if not config.webhook_url:
-        raise ValueError(
-            "missing required config value 'webhook_url' "
-            "(set CGC_WEBHOOK_URL or add it to config.toml)"
-        )
+    config.require_keys(("webhook_url",))
+    assert config.webhook_url is not None  # require_keys guarantees a non-empty value
 
     payload = {"text": format_message(msg)}
     response = requests.post(
         config.webhook_url,
         json=payload,
-        timeout=_WEBHOOK_TIMEOUT_SECONDS,
+        timeout=config.webhook_timeout,
     )
     if not response.ok:
         raise requests.HTTPError(
@@ -66,12 +61,21 @@ def send_webhook(config: Config, msg: ChatMessage) -> None:
         )
 
 
-def _build_service(config: Config) -> Resource:
-    """Build a Google Chat API client using cached user OAuth credentials."""
+def _build_chat_service(config: Config, *, load_creds: Callable[[Config], object]) -> Resource:
+    """Build a Google Chat API client using credentials from ``load_creds``.
+
+    Single builder parameterised by the credentials loader so the user-OAuth and
+    service-account (app) client constructions share one code path (DRY).
+    """
     from googleapiclient.discovery import build
 
-    creds = load_credentials(config)
+    creds = load_creds(config)
     return build("chat", "v1", credentials=creds, cache_discovery=False)
+
+
+def _build_service(config: Config) -> Resource:
+    """Build a Google Chat API client using cached user OAuth credentials."""
+    return _build_chat_service(config, load_creds=load_credentials)
 
 
 def build_app_service(config: Config) -> Resource:
@@ -80,10 +84,7 @@ def build_app_service(config: Config) -> Resource:
     Used by ``cgc serve`` so the process reads and posts messages as the Chat
     app itself rather than as a human user.
     """
-    from googleapiclient.discovery import build
-
-    creds = load_app_credentials(config)
-    return build("chat", "v1", credentials=creds, cache_discovery=False)
+    return _build_chat_service(config, load_creds=load_app_credentials)
 
 
 def post_message_as_app(
@@ -110,58 +111,22 @@ def post_message_as_app(
     return chat.spaces().messages().create(**request_kwargs).execute()
 
 
-def list_messages_as_app(
-    config: Config,
-    since: str | None = None,
-    *,
-    service: Resource | None = None,
-    page_size: int = 100,
+def _list_messages(
+    service: Resource,
+    space: str,
+    since: str | None,
+    page_size: int,
 ) -> list[dict[str, Any]]:
-    """List messages in the space using **service-account (app)** credentials.
+    """Paginate ``spaces.messages.list`` for ``space`` (shared by both readers).
 
-    Mirrors :func:`list_messages` but authenticates as the Chat app. ``service``
-    is injectable for tests so no network access is required.
+    Holds the single pagination loop and ``createTime`` filter construction so
+    the user-OAuth and app-auth readers do not duplicate it (DRY). ``since`` is
+    validated against the RFC3339 shape before being interpolated into the Chat
+    API ``filter`` expression so a malformed value fails fast.
     """
-    space = _require_space(config)
-    chat = service if service is not None else build_app_service(config)
-
     request_kwargs: dict[str, Any] = {"parent": space, "pageSize": page_size}
     if since is not None:
-        request_kwargs["filter"] = f'createTime > "{since}"'
-
-    messages: list[dict[str, Any]] = []
-    request = chat.spaces().messages().list(**request_kwargs)
-    while request is not None:
-        result = request.execute()
-        messages.extend(result.get("messages", []))
-        request = (
-            chat.spaces().messages().list_next(previous_request=request, previous_response=result)
-        )
-    return messages
-
-
-def list_messages(
-    config: Config,
-    since: str | None = None,
-    *,
-    page_size: int = 100,
-) -> list[dict[str, Any]]:
-    """List messages in the configured space, optionally filtered by time.
-
-    Args:
-        config: Resolved configuration.
-        since: Optional RFC3339 lower bound; messages with ``createTime``
-            strictly greater are returned.
-        page_size: API page size.
-
-    Returns:
-        A list of raw Chat API message resources.
-    """
-    space = _require_space(config)
-    service = _build_service(config)
-
-    request_kwargs: dict[str, Any] = {"parent": space, "pageSize": page_size}
-    if since is not None:
+        validate_create_time(since)
         request_kwargs["filter"] = f'createTime > "{since}"'
 
     messages: list[dict[str, Any]] = []
@@ -175,6 +140,43 @@ def list_messages(
             .list_next(previous_request=request, previous_response=result)
         )
     return messages
+
+
+def list_messages_as_app(
+    config: Config,
+    since: str | None = None,
+    *,
+    service: Resource | None = None,
+) -> list[dict[str, Any]]:
+    """List messages in the space using **service-account (app)** credentials.
+
+    Mirrors :func:`list_messages` but authenticates as the Chat app. ``service``
+    is injectable for tests so no network access is required. The page size is
+    config-driven (``page_size`` / ``CGC_PAGE_SIZE``).
+    """
+    space = _require_space(config)
+    chat = service if service is not None else build_app_service(config)
+    return _list_messages(chat, space, since, config.page_size)
+
+
+def list_messages(
+    config: Config,
+    since: str | None = None,
+) -> list[dict[str, Any]]:
+    """List messages in the configured space, optionally filtered by time.
+
+    Args:
+        config: Resolved configuration.
+        since: Optional RFC3339 lower bound; messages with ``createTime``
+            strictly greater are returned.
+
+    Returns:
+        A list of raw Chat API message resources. The page size is config-driven
+        (``page_size`` / ``CGC_PAGE_SIZE``).
+    """
+    space = _require_space(config)
+    service = _build_service(config)
+    return _list_messages(service, space, since, config.page_size)
 
 
 def delete_message(config: Config, message_name: str) -> None:

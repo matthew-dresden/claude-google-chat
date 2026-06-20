@@ -29,6 +29,7 @@ from claude_google_chat import bootstrap as bootstrap_module
 from claude_google_chat.bootstrap import (
     MESSAGE_CREATED_EVENT,
     ChatAppNotConfiguredError,
+    SpaceNotFoundError,
     _create_subscription,
     _ensure_space,
     bootstrap,
@@ -63,24 +64,47 @@ def _config(**overrides: Any) -> Config:
 
 
 class _FakeEventsService:
-    """Minimal fake of the Workspace Events ``subscriptions().create()`` chain."""
+    """Minimal fake of the Workspace Events ``subscriptions()`` chain.
 
-    def __init__(self, *, result: Any = None, error: Exception | None = None) -> None:
+    Models both ``create()`` (the happy/gate path) and ``list(filter=...)`` (the
+    idempotent 409 path that fetches the real existing subscription name).
+    """
+
+    def __init__(
+        self,
+        *,
+        result: Any = None,
+        error: Exception | None = None,
+        list_result: Any = None,
+    ) -> None:
         self._result = result if result is not None else {"name": "subscriptions/sub-1"}
         self._error = error
+        self._list_result = list_result if list_result is not None else {"subscriptions": []}
         self.create_bodies: list[dict[str, Any]] = []
+        self.list_filters: list[str] = []
+        self._pending: Any = None
 
     def subscriptions(self) -> _FakeEventsService:
         return self
 
     def create(self, *, body: dict[str, Any]) -> _FakeEventsService:
         self.create_bodies.append(body)
+        self._pending = ("create", None)
+        return self
+
+    def list(self, *, filter: str) -> _FakeEventsService:
+        # ``filter`` mirrors the Workspace Events API keyword exactly.
+        self.list_filters.append(filter)
+        self._pending = ("list", self._list_result)
         return self
 
     def execute(self) -> Any:
-        if self._error is not None:
-            raise self._error
-        return self._result
+        kind, payload = self._pending
+        if kind == "create":
+            if self._error is not None:
+                raise self._error
+            return self._result
+        return payload
 
 
 # --------------------------------------------------------------------------- #
@@ -131,16 +155,26 @@ def test_subscription_body_rejects_bad_space() -> None:
     "message",
     [
         "PERMISSION_DENIED: the caller does not have permission",
-        "404 NOT_FOUND",
-        "Chat app is not configured",
+        "the Chat app is not configured",
     ],
 )
-def test_is_not_configured_error_detects(message: str) -> None:
+def test_is_not_configured_error_detects_by_substring(message: str) -> None:
+    """The unambiguous "not configured" phrasings classify without a status."""
     assert is_not_configured_error(message) is True
 
 
+def test_is_not_configured_error_detects_403_status() -> None:
+    """An HTTP 403 (PERMISSION_DENIED) is the pending-Configuration signal."""
+    assert is_not_configured_error("any message", status=403) is True
+
+
+def test_is_not_configured_error_404_is_not_misclassified() -> None:
+    """A bare 404 NOT_FOUND is NOT the configuration gate (it's space-not-found)."""
+    assert is_not_configured_error("404 NOT_FOUND", status=404) is False
+
+
 def test_is_not_configured_error_ignores_unrelated() -> None:
-    assert is_not_configured_error("INVALID_ARGUMENT: bad request body") is False
+    assert is_not_configured_error("INVALID_ARGUMENT: bad request body", status=400) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -220,19 +254,12 @@ def test_ensure_space_created_without_name_fails_fast(fake_chat_service: Any) ->
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize(
-    ("status", "marker"),
-    [
-        (404, "NOT_FOUND"),
-        (403, "PERMISSION_DENIED: caller does not have permission"),
-    ],
-)
-def test_join_not_configured_raises_actionable_error(
-    fake_chat_service: Any, status: int, marker: str
-) -> None:
-    """A NOT_FOUND/PERMISSION_DENIED on join surfaces the configuration gate."""
+def test_join_permission_denied_raises_configuration_gate(fake_chat_service: Any) -> None:
+    """A 403 PERMISSION_DENIED on join surfaces the configuration gate."""
     config = _config(space_id="spaces/AAAA")
-    fake_chat_service.member_create_error = _http_error(status, marker)
+    fake_chat_service.member_create_error = _http_error(
+        403, "PERMISSION_DENIED: caller does not have permission"
+    )
 
     with pytest.raises(ChatAppNotConfiguredError) as exc_info:
         _ensure_space(config, fake_chat_service)
@@ -242,6 +269,27 @@ def test_join_not_configured_raises_actionable_error(
     assert "cgc bootstrap" in message
     assert "Configuration" in message
     # The original API error is preserved as the cause (no swallowing).
+    assert isinstance(exc_info.value.__cause__, HttpError)
+
+
+def test_join_not_found_raises_space_not_found(fake_chat_service: Any) -> None:
+    """A 404 on a configured space id is reported as space-not-found, not the gate.
+
+    A valid-but-nonexistent space id (operator typo) must get the accurate
+    "space not found or app lacks access" remediation rather than the long
+    "configure your Chat app" instructions.
+    """
+    config = _config(space_id="spaces/AAAA")
+    fake_chat_service.member_create_error = _http_error(404, "NOT_FOUND")
+
+    with pytest.raises(SpaceNotFoundError) as exc_info:
+        _ensure_space(config, fake_chat_service)
+
+    message = str(exc_info.value)
+    assert "spaces/AAAA" in message
+    assert "not found" in message.lower()
+    # Must NOT leak the configuration-gate instructions for this root cause.
+    assert "Configuration console" not in message
     assert isinstance(exc_info.value.__cause__, HttpError)
 
 
@@ -284,16 +332,37 @@ def test_create_subscription_returns_name() -> None:
     assert body["notificationEndpoint"]["pubsubTopic"] == "projects/test-project/topics/chat-events"
 
 
-def test_create_subscription_idempotent_on_conflict() -> None:
-    """An existing subscription (409) is reported as success, not an error."""
+def test_create_subscription_idempotent_returns_real_name() -> None:
+    """A 409 fetches and returns the *real* existing subscription resource name."""
     config = _config()
-    events = _FakeEventsService(error=_http_error(409, "ALREADY_EXISTS"))
+    events = _FakeEventsService(
+        error=_http_error(409, "ALREADY_EXISTS"),
+        list_result={"subscriptions": [{"name": "subscriptions/existing-7"}]},
+    )
+
+    name = _create_subscription(
+        config, events, "spaces/AAAA", "projects/test-project/topics/chat-events"
+    )
+
+    assert name == "subscriptions/existing-7"
+    # The lookup was filtered by the Chat space target resource.
+    assert events.list_filters == ['target_resource="//chat.googleapis.com/spaces/AAAA"']
+
+
+def test_create_subscription_idempotent_without_listed_name() -> None:
+    """A 409 with no matching listing falls back to an explicit marker (not fabricated)."""
+    config = _config()
+    events = _FakeEventsService(
+        error=_http_error(409, "ALREADY_EXISTS"),
+        list_result={"subscriptions": []},
+    )
 
     name = _create_subscription(
         config, events, "spaces/AAAA", "projects/test-project/topics/chat-events"
     )
 
     assert "spaces/AAAA" in name
+    assert "name unavailable" in name
 
 
 def test_create_subscription_not_configured_raises_actionable_error() -> None:
@@ -356,7 +425,7 @@ def test_bootstrap_surfaces_not_configured_gate(
 ) -> None:
     """If the Chat app is not configured, bootstrap raises the actionable gate."""
     config = _config(space_id="spaces/AAAA")
-    fake_chat_service.member_create_error = _http_error(404, "NOT_FOUND")
+    fake_chat_service.member_create_error = _http_error(403, "PERMISSION_DENIED")
     events = _FakeEventsService()
 
     monkeypatch.setattr(bootstrap_module, "_build_chat_service", lambda cfg: fake_chat_service)

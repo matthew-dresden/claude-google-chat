@@ -48,6 +48,8 @@ The config file is read with the Python 3.11+ stdlib `tomllib` module. Writes fr
 | **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude-command:`. |
 | **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
 | **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener/responder idle timeout, seconds (float). Optional · default `0` (run forever). |
+| **`webhook_timeout`**<br>`CGC_WEBHOOK_TIMEOUT` | Outbound webhook HTTP timeout, seconds (float). Optional · default `30.0`. |
+| **`page_size`**<br>`CGC_PAGE_SIZE` | Chat API `messages.list` page size (int). Optional · default `100`. |
 | **`service_account_file`**<br>`CGC_SERVICE_ACCOUNT_FILE` | Chat app service-account JSON key (app auth). **Required** for `bootstrap`/`serve`. |
 | **`project_id`**<br>`CGC_PROJECT_ID` | GCP project id; qualifies a bare `pubsub_topic`. Optional. |
 | **`pubsub_topic`**<br>`CGC_PUBSUB_TOPIC` | Pub/Sub topic for Chat events — bare id or `projects/<p>/topics/<t>`. **Required** for `bootstrap`. |
@@ -105,8 +107,10 @@ export CGC_LISTEN_TIMEOUT="0"
 
 - `poll_interval` is the **deliberate, env-driven cadence** at which the listener polls the space. It is not a `sleep`-based readiness wait.
 - `listen_timeout` is an **idle timeout**. When set to a positive value, the listener exits non-zero with a clear diagnostic if no qualifying message arrives within the window. `0` means run forever.
+- `webhook_timeout` is the **outbound HTTP timeout** for the incoming-webhook `POST` in `cgc chat send`. It bounds a single network call, not a cadence.
+- `page_size` is the **Chat API list page size** used when reading messages (`listen`/`serve`/`clear`).
 
-Both are configurable; neither is hardcoded.
+All four are configurable via environment variable or the config file; none is hardcoded.
 
 ---
 

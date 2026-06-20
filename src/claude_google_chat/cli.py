@@ -25,6 +25,7 @@ choices, file paths, and config-derived values) are wired from
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Annotated
 
@@ -45,6 +46,7 @@ from claude_google_chat.completion import (
 from claude_google_chat.config import (
     Config,
     default_config_path,
+    merge_and_write_config,
     write_config,
 )
 from claude_google_chat.messages import ChatMessage
@@ -78,6 +80,28 @@ def _version_callback(value: bool) -> None:
     if value:
         typer.echo(__version__)
         raise typer.Exit()
+
+
+def _apply_overrides(
+    config: Config,
+    *,
+    space_id: str | None = None,
+    timeout: float | None = None,
+    trigger_prefix: str | None = None,
+) -> Config:
+    """Return ``config`` with any non-``None`` CLI overrides applied.
+
+    Centralises the "replace the field only when the flag was given" pattern
+    shared by ``serve``/``listen``/``clear`` so the override logic lives in one
+    place (DRY) instead of being repeated per command.
+    """
+    if space_id is not None:
+        config = replace(config, space_id=space_id)
+    if timeout is not None:
+        config = replace(config, listen_timeout=timeout)
+    if trigger_prefix is not None:
+        config = replace(config, trigger_prefix=trigger_prefix)
+    return config
 
 
 @app.callback()
@@ -150,15 +174,17 @@ def config_set(
     ),
     value: str = typer.Argument(..., help="Value to store."),
 ) -> None:
-    """Set a single config key, preserving existing keys."""
-    path = default_config_path()
-    existing: dict[str, object] = {}
-    if path.exists():
-        import tomllib
+    """Set a single config key, preserving existing keys.
 
-        existing = dict(tomllib.loads(path.read_text(encoding="utf-8")))
-    existing[key] = value
-    written = write_config(existing, path=path)
+    Routes through the shared ``merge_config_values`` validation (via
+    ``merge_and_write_config``) so an unknown key fails fast with the same single
+    rule used by ``cgc bootstrap``, before anything is written.
+    """
+    try:
+        written = merge_and_write_config({key: value})
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     typer.echo(f"updated {key} in {written}")
 
 
@@ -181,8 +207,6 @@ def auth_login(
     otherwise from the resolved ``oauth_client_file`` config value. Fails fast
     when neither is available.
     """
-    from dataclasses import replace
-
     from claude_google_chat.auth import login
 
     if client_file is not None:
@@ -242,13 +266,16 @@ def bootstrap() -> None:
     discovered values into ``config.toml``. Fails fast with exact instructions
     if the manual Chat app Configuration console step is not yet done.
     """
-    from claude_google_chat.bootstrap import ChatAppNotConfiguredError
+    from claude_google_chat.bootstrap import (
+        ChatAppNotConfiguredError,
+        SpaceNotFoundError,
+    )
     from claude_google_chat.bootstrap import bootstrap as run_bootstrap
 
     config = Config.load(require=("service_account_file", "pubsub_topic"))
     try:
         result = run_bootstrap(config)
-    except ChatAppNotConfiguredError as exc:
+    except (ChatAppNotConfiguredError, SpaceNotFoundError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
 
@@ -282,18 +309,11 @@ def serve(
     each new owner message starting with the trigger prefix, posts a structured
     reply via the Chat API. Exits non-zero on idle timeout (when configured).
     """
-    from dataclasses import replace
-
     from claude_google_chat.serve import run as run_serve
 
-    config = Config.load()
-    if space_id is not None:
-        config = replace(config, space_id=space_id)
-    if timeout is not None:
-        config = replace(config, listen_timeout=timeout)
+    config = _apply_overrides(Config.load(), space_id=space_id, timeout=timeout)
     config.require_keys(("service_account_file", "space_id"))
-    code = run_serve(config, once=once)
-    raise typer.Exit(code=code)
+    raise typer.Exit(code=run_serve(config, once=once))
 
 
 @app.command("listen")
@@ -310,18 +330,11 @@ def listen(
     ),
 ) -> None:
     """Run the inbound listener, emitting one JSON line per new message."""
-    from dataclasses import replace
-
     from claude_google_chat.listener import run
 
-    config = Config.load()
-    if space_id is not None:
-        config = replace(config, space_id=space_id)
-    if timeout is not None:
-        config = replace(config, listen_timeout=timeout)
+    config = _apply_overrides(Config.load(), space_id=space_id, timeout=timeout)
     config.require_keys(("space_id", "oauth_client_file"))
-    code = run(config, once=once)
-    raise typer.Exit(code=code)
+    raise typer.Exit(code=run(config, once=once))
 
 
 @app.command("clear")
@@ -334,13 +347,10 @@ def clear(
     ),
 ) -> None:
     """Delete trigger-prefixed messages from the configured space."""
-    from dataclasses import replace
-
     from claude_google_chat.chat import delete_message, list_messages
 
     config = Config.load(require=("space_id", "oauth_client_file"))
-    if trigger_prefix is not None:
-        config = replace(config, trigger_prefix=trigger_prefix)
+    config = _apply_overrides(config, trigger_prefix=trigger_prefix)
     prefix = config.trigger_prefix
     deleted = 0
     for raw in list_messages(config):

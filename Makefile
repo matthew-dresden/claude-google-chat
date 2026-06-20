@@ -3,7 +3,9 @@
 install:
 	uv sync --all-extras
 
-lint:
+# Lint runs static checks AND verifies formatting, so a formatting drift is
+# caught locally (by `make lint`) before push, matching the CI gate.
+lint: format-check
 	uv run ruff check .
 
 format:

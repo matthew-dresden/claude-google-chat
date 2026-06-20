@@ -46,7 +46,7 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,6 +63,29 @@ PROG_NAME = "cgc"
 COMPLETE_VAR = "_CGC_COMPLETE"
 
 
+def _resolve_console_script(
+    interpreter: str,
+    prog_name: str,
+    which: Callable[[str], str | None],
+) -> str:
+    """Resolve the path to ``prog_name`` next to ``interpreter`` or via ``which``.
+
+    Pure resolution logic with the filesystem/``PATH`` lookup injected, so every
+    branch — including the "not found anywhere" failure — is exercised by a unit
+    test (no coverage suppression needed). Raises ``RuntimeError`` (fail fast)
+    when the console script cannot be located.
+    """
+    candidate = Path(interpreter).with_name(prog_name)
+    if candidate.exists():
+        return str(candidate)
+    found = which(prog_name)
+    if found is None:
+        raise RuntimeError(
+            f"{prog_name!r} console script not found next to {interpreter!r} or on PATH"
+        )
+    return found
+
+
 def _discover_cgc() -> str:
     """Locate the real ``cgc`` console script (input-driven, never hard-coded).
 
@@ -71,15 +94,7 @@ def _discover_cgc() -> str:
     ``python -m`` (whose argv[0] would not be ``cgc``). The script sits next to
     the interpreter running the tests; fall back to ``PATH`` lookup.
     """
-    candidate = Path(sys.executable).with_name(PROG_NAME)
-    if candidate.exists():
-        return str(candidate)
-    found = shutil.which(PROG_NAME)
-    if found is None:  # pragma: no cover - environment misconfiguration
-        raise RuntimeError(
-            f"{PROG_NAME!r} console script not found next to {sys.executable!r} or on PATH"
-        )
-    return found
+    return _resolve_console_script(sys.executable, PROG_NAME, shutil.which)
 
 
 # The genuine console script users invoke (so the completion protocol's
@@ -625,3 +640,42 @@ def test_zsh_completion_script_sources_under_compinit(
     assert "Traceback" not in (completed.stdout + completed.stderr)
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "READY" in completed.stdout
+
+
+# --------------------------------------------------------------------------- #
+# _resolve_console_script: pure resolution logic, all branches covered.
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_console_script_prefers_sibling(tmp_path: Path) -> None:
+    """A console script next to the interpreter is returned without a PATH lookup."""
+    interpreter = tmp_path / "python"
+    interpreter.write_text("", encoding="utf-8")
+    sibling = tmp_path / PROG_NAME
+    sibling.write_text("", encoding="utf-8")
+
+    def _never(_: str) -> str | None:
+        raise AssertionError("which must not be consulted when a sibling exists")
+
+    assert _resolve_console_script(str(interpreter), PROG_NAME, _never) == str(sibling)
+
+
+def test_resolve_console_script_falls_back_to_path(tmp_path: Path) -> None:
+    """With no sibling, the PATH lookup result is returned."""
+    interpreter = tmp_path / "python"
+    interpreter.write_text("", encoding="utf-8")
+
+    assert (
+        _resolve_console_script(str(interpreter), PROG_NAME, lambda _: "/usr/bin/cgc")
+        == "/usr/bin/cgc"
+    )
+
+
+def test_resolve_console_script_raises_when_absent(tmp_path: Path) -> None:
+    """When neither a sibling nor PATH has the script, it fails fast."""
+    interpreter = tmp_path / "python"
+    interpreter.write_text("", encoding="utf-8")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        _resolve_console_script(str(interpreter), PROG_NAME, lambda _: None)
+    assert PROG_NAME in str(exc_info.value)

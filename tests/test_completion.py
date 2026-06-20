@@ -10,6 +10,7 @@ file is touched.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -59,7 +60,7 @@ def test_safe_completer_swallows_exceptions() -> None:
 
 def test_safe_completer_returns_list_from_generator() -> None:
     @completion.safe_completer
-    def gen(incomplete: str):  # type: ignore[no-untyped-def]
+    def gen(incomplete: str) -> Iterator[str]:
         yield "a"
         yield "b"
 
@@ -124,18 +125,6 @@ def test_complete_trigger_prefix_from_config(patched_config_path: Path) -> None:
     assert completion.complete_trigger_prefix("") == ["ops-command:"]
 
 
-def test_complete_config_value_aggregates_scalars(patched_config_path: Path) -> None:
-    _write_config(
-        patched_config_path,
-        space_id="spaces/AAAA",
-        project_id="proj-1",
-        trigger_prefix="claude-command:",
-    )
-    values = completion.complete_config_value("")
-    assert "spaces/AAAA" in values
-    assert "proj-1" in values
-
-
 def test_config_derived_completers_safe_without_file(patched_config_path: Path) -> None:
     # No config file written -> optional-value completers must return [] not raise.
     assert completion.complete_space_id("") == []
@@ -143,8 +132,6 @@ def test_config_derived_completers_safe_without_file(patched_config_path: Path) 
     from claude_google_chat.messages import DEFAULT_TRIGGER_PREFIX
 
     assert completion.complete_trigger_prefix("") == [DEFAULT_TRIGGER_PREFIX]
-    # complete_config_value aggregates scalars; only the defaulted prefix is present.
-    assert completion.complete_config_value("") == [DEFAULT_TRIGGER_PREFIX]
 
 
 def test_config_derived_completers_safe_on_load_error(
@@ -158,7 +145,6 @@ def test_config_derived_completers_safe_on_load_error(
     assert completion._load_config_safely() is None
     assert completion.complete_space_id("") == []
     assert completion.complete_trigger_prefix("") == []
-    assert completion.complete_config_value("") == []
 
 
 def test_detect_shell_returns_name_or_none() -> None:

@@ -162,10 +162,13 @@ def test_config_set_preserves_existing_keys(
 
 
 def test_config_set_rejects_unknown_key(runner: CliRunner, cli_config_path: Path) -> None:
-    # write_config validates keys against ENV_OVERRIDES and fails fast.
+    # config_set routes through the shared merge_config_values validation, which
+    # rejects an unknown key up front; the CLI surfaces it as a clean non-zero
+    # exit with an actionable message (no leaked traceback) and writes nothing.
     result = runner.invoke(cli.app, ["config", "set", "bogus_key", "x"])
-    assert result.exit_code != 0
-    assert isinstance(result.exception, ValueError)
+    assert result.exit_code == 2
+    assert "bogus_key" in result.output
+    assert not cli_config_path.exists()
 
 
 def test_config_set_missing_value_arg_exits_nonzero(runner: CliRunner) -> None:
