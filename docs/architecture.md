@@ -19,10 +19,12 @@
 |---|---|
 | `messages.py` | **Pure, I/O-free** structured message envelope. `ChatMessage` dataclass, `format_message`, `parse_message`. Single source of truth for the protocol, the status/kind constant sets, and the status→emoji map. |
 | `config.py` | **Single config authority.** `Config` frozen dataclass built by `Config.load()`; merges file + env, validates, fails fast on missing required values, and provides a redacted view for display. |
-| `auth.py` | Google OAuth (InstalledAppFlow). `load_credentials` (load/refresh cached token) and `login` (run the flow, cache token with `0600` perms). Never logs tokens. |
-| `chat.py` | Network I/O to Google Chat: `send_webhook` (POST to the incoming webhook), `list_messages` and `delete_message` (Chat REST API). |
+| `auth.py` | Google auth. **User OAuth** (InstalledAppFlow): `load_credentials`/`login`. **App auth** (service account): `load_app_credentials` for `bootstrap`/`serve`. Never logs tokens or key material. |
+| `chat.py` | Network I/O to Google Chat. User-OAuth path: `send_webhook`, `list_messages`, `delete_message`. App path: `build_app_service`, `post_message_as_app`, `list_messages_as_app`. |
 | `listener.py` | `Listener(config)` with `iter_new_messages()` — event/poll-driven, env-driven cadence and idle timeout, surfaces trigger-prefixed messages, emits JSON lines to stdout. |
-| `cli.py` | Typer `app` wiring the modules into the `cgc` console script (`config`, `auth login`, `chat send`, `listen`, `--version`). |
+| `bootstrap.py` | **Service-account (app) bootstrap** — the API-level steps Terraform can't do: join/create the Chat space, create the Workspace Events `message.created` → Pub/Sub subscription, and merge results into `config.toml`. Fails fast with exact instructions when the one manual Chat app **Configuration** console step is pending. Pure helpers (`normalize_pubsub_topic`, `build_subscription_body`, `is_not_configured_error`) are unit-tested. |
+| `serve.py` | **Always-listening responder** (`cgc serve`). One loop polling the space as the app, one responder per new owner message, structured replies posted (threaded) via the Chat API. Configurable `trigger_prefix`/`poll_interval`/`listen_timeout`/`owner_email`; fetcher/poster/responder injectable for tests. |
+| `cli.py` | Typer `app` wiring the modules into the `cgc` console script (`config`, `auth login`, `chat send`, `bootstrap`, `serve`, `listen`, `clear`, `status`, `--version`). |
 | `__main__.py` | `python -m claude_google_chat` → `cli.app()`. |
 
 The package follows SOLID/DRY: `messages.py` is pure and unit-testable, `config.py` is the only place config is resolved, and the protocol constants live in exactly one module.

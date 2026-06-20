@@ -33,9 +33,15 @@ ENV_OVERRIDES: dict[str, str] = {
     "trigger_prefix": "CGC_TRIGGER_PREFIX",
     "poll_interval": "CGC_POLL_INTERVAL",
     "listen_timeout": "CGC_LISTEN_TIMEOUT",
+    # Service-account (app) auth + Workspace Events bootstrap.
+    "service_account_file": "CGC_SERVICE_ACCOUNT_FILE",
+    "project_id": "CGC_PROJECT_ID",
+    "pubsub_topic": "CGC_PUBSUB_TOPIC",
+    "space_display_name": "CGC_SPACE_DISPLAY_NAME",
+    "owner_email": "CGC_OWNER_EMAIL",
 }
 
-_SECRET_KEYS: frozenset[str] = frozenset({"webhook_url", "token_file"})
+_SECRET_KEYS: frozenset[str] = frozenset({"webhook_url", "token_file", "service_account_file"})
 
 
 def config_dir() -> Path:
@@ -77,6 +83,11 @@ class Config:
     trigger_prefix: str = DEFAULT_TRIGGER_PREFIX
     poll_interval: float = DEFAULT_POLL_INTERVAL
     listen_timeout: float = DEFAULT_LISTEN_TIMEOUT
+    service_account_file: str | None = None
+    project_id: str | None = None
+    pubsub_topic: str | None = None
+    space_display_name: str | None = None
+    owner_email: str | None = None
 
     @classmethod
     def load(
@@ -139,6 +150,11 @@ class Config:
                 if "listen_timeout" in merged
                 else DEFAULT_LISTEN_TIMEOUT
             ),
+            service_account_file=_opt_str("service_account_file"),
+            project_id=_opt_str("project_id"),
+            pubsub_topic=_opt_str("pubsub_topic"),
+            space_display_name=_opt_str("space_display_name"),
+            owner_email=_opt_str("owner_email"),
         )
         config.require_keys(require)
         return config
@@ -183,6 +199,36 @@ def _toml_value(value: object) -> str:
     return f'"{escaped}"'
 
 
+def merge_config_values(
+    existing: Mapping[str, object],
+    updates: Mapping[str, object],
+) -> dict[str, object]:
+    """Merge ``updates`` over ``existing`` config values (pure, no I/O).
+
+    Keys present in ``updates`` with a non-``None`` value overwrite the matching
+    key in ``existing``; ``None`` values in ``updates`` are skipped so a caller
+    that does not know a value leaves any prior value intact. Every resulting
+    key must be a known config key (validated against :data:`ENV_OVERRIDES`),
+    failing fast on an unknown key. This is the single, testable merge rule used
+    by ``cgc bootstrap`` so partial re-runs are idempotent and never drop
+    previously-stored settings.
+    """
+    valid = set(ENV_OVERRIDES)
+    merged: dict[str, object] = {}
+    for key, value in existing.items():
+        if key not in valid:
+            raise ValueError(f"unknown config key {key!r}")
+        if value is not None:
+            merged[key] = value
+    for key, value in updates.items():
+        if key not in valid:
+            raise ValueError(f"unknown config key {key!r}")
+        if value is None:
+            continue
+        merged[key] = value
+    return merged
+
+
 def write_config(values: dict[str, object], path: Path | None = None) -> Path:
     """Persist config ``values`` to a TOML file under the config dir.
 
@@ -203,3 +249,21 @@ def write_config(values: dict[str, object], path: Path | None = None) -> Path:
     file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     file_path.chmod(0o600)
     return file_path
+
+
+def merge_and_write_config(
+    updates: Mapping[str, object],
+    path: Path | None = None,
+) -> Path:
+    """Read the existing config (if any), merge ``updates``, and persist it.
+
+    Returns the path written. Used by ``cgc bootstrap`` to merge discovered
+    values (space id, topic) into ``config.toml`` without clobbering values the
+    user set earlier (e.g. ``trigger_prefix``).
+    """
+    file_path = default_config_path() if path is None else path
+    existing: dict[str, object] = {}
+    if file_path.exists():
+        existing = dict(tomllib.loads(file_path.read_text(encoding="utf-8")))
+    merged = merge_config_values(existing, updates)
+    return write_config(merged, path=file_path)

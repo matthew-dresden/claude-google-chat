@@ -4,6 +4,9 @@ Subcommands:
     config init|show|set   manage the user config file
     auth login             complete the OAuth installed-app flow
     chat send              send a status ping via the webhook
+    bootstrap              service-account setup Terraform can't do (join/create
+                           space, create Workspace Events subscription, merge config)
+    serve                  always-listening responder (app auth)
     listen                 run the inbound listener
     clear                  delete trigger messages from the space
     status                 show resolved configuration health
@@ -135,6 +138,60 @@ def setup() -> None:
     typer.echo("required for send:  webhook_url (CGC_WEBHOOK_URL)")
     typer.echo("required for read:  space_id (CGC_SPACE_ID), oauth_client_file")
     typer.echo("use 'cgc config set <key> <value>' to populate")
+
+
+@app.command("bootstrap")
+def bootstrap() -> None:
+    """Run service-account setup that Terraform cannot do.
+
+    Joins or creates the target Chat space, registers the Google Workspace
+    Events ``message.created`` subscription to the Pub/Sub topic, and merges the
+    discovered values into ``config.toml``. Fails fast with exact instructions
+    if the manual Chat app Configuration console step is not yet done.
+    """
+    from claude_google_chat.bootstrap import ChatAppNotConfiguredError
+    from claude_google_chat.bootstrap import bootstrap as run_bootstrap
+
+    config = Config.load(require=("service_account_file", "pubsub_topic"))
+    try:
+        result = run_bootstrap(config)
+    except ChatAppNotConfiguredError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+
+    if result.created_space:
+        typer.echo(f"created space {result.space_id}")
+    elif result.joined_space:
+        typer.echo(f"joined space {result.space_id}")
+    else:
+        typer.echo(f"already a member of space {result.space_id}")
+    typer.echo(f"subscription: {result.subscription_name}")
+    typer.echo(f"events topic: {result.pubsub_topic}")
+    typer.echo(f"config written: {result.config_path}")
+
+
+@app.command("serve")
+def serve(
+    once: bool = typer.Option(False, "--once", help="Handle pending owner messages once and exit."),
+    timeout: float | None = typer.Option(
+        None, "--timeout", help="Idle timeout in seconds (overrides config)."
+    ),
+) -> None:
+    """Run the always-listening responder, replying to owner messages as the app.
+
+    Polls the configured space using service-account (app) credentials and, for
+    each new owner message starting with the trigger prefix, posts a structured
+    reply via the Chat API. Exits non-zero on idle timeout (when configured).
+    """
+    from dataclasses import replace
+
+    from claude_google_chat.serve import run as run_serve
+
+    config = Config.load(require=("service_account_file", "space_id"))
+    if timeout is not None:
+        config = replace(config, listen_timeout=timeout)
+    code = run_serve(config, once=once)
+    raise typer.Exit(code=code)
 
 
 @app.command("listen")
