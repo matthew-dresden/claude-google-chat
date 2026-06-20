@@ -272,6 +272,7 @@ def test_every_env_override_is_honoured() -> None:
         "send_envelope",
         "max_consecutive_errors",
         "require_trigger",
+        "threads",
     }
     env = {var: f"value-for-{key}" for key, var in ENV_OVERRIDES.items() if key not in typed_fields}
     env["CGC_POLL_INTERVAL"] = "3.5"
@@ -281,6 +282,7 @@ def test_every_env_override_is_honoured() -> None:
     env["CGC_SEND_ENVELOPE"] = "true"
     env["CGC_MAX_CONSECUTIVE_ERRORS"] = "7"
     env["CGC_REQUIRE_TRIGGER"] = "false"
+    env["CGC_THREADS"] = "spaces/AAAA/threads/T1, spaces/AAAA/threads/T2"
     config = Config.load(path=Path("/nonexistent.toml"), env=env)
     for key in ENV_OVERRIDES:
         if key in typed_fields:
@@ -294,6 +296,7 @@ def test_every_env_override_is_honoured() -> None:
     assert config.send_envelope is True
     assert config.max_consecutive_errors == 7
     assert config.require_trigger is False
+    assert config.threads == ("spaces/AAAA/threads/T1", "spaces/AAAA/threads/T2")
 
 
 # --------------------------------------------------------------------------- #

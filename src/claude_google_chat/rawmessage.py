@@ -2,9 +2,10 @@
 
 A raw Chat message resource is a plain ``dict`` returned by the Chat REST API.
 The listener needs the sender ``type`` out of it (to tell a HUMAN apart from a
-BOT/app and avoid surfacing the listener's own outbound posts). These accessors
-are the single source of truth for reaching into that shape (DRY) and are pure
-(no I/O) so they unit-test in isolation.
+BOT/app and avoid surfacing the listener's own outbound posts) and the stable
+``thread.name`` (to filter by, and surface on, the thread a message belongs to).
+These accessors are the single source of truth for reaching into that shape
+(DRY) and are pure (no I/O) so they unit-test in isolation.
 """
 
 from __future__ import annotations
@@ -31,3 +32,20 @@ def is_human_message(raw: dict[str, Any]) -> bool:
     its own outbound posts or other bots' messages (loop prevention).
     """
     return sender_type(raw) == HUMAN_SENDER_TYPE
+
+
+def thread_name(raw: dict[str, Any]) -> str | None:
+    """Return the stable Chat ``thread.name`` of a raw message, if present.
+
+    The thread resource name (``spaces/.../threads/...``) identifies which
+    thread a message belongs to. The listener uses it both to *filter* to
+    configured threads and to *surface* the owning thread on each emitted
+    message. Returns ``None`` when the message carries no thread (e.g. an
+    unthreaded space post).
+    """
+    thread = raw.get("thread")
+    if isinstance(thread, dict):
+        value = thread.get("name")
+        if isinstance(value, str) and value:
+            return value
+    return None

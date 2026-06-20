@@ -35,6 +35,7 @@ from claude_google_chat.completion import (
     complete_shell,
     complete_space_id,
     complete_status,
+    complete_thread,
     complete_trigger_prefix,
     detect_shell,
     install_completion_line,
@@ -85,12 +86,15 @@ def _apply_overrides(
     space_id: str | None = None,
     timeout: float | None = None,
     trigger_prefix: str | None = None,
+    threads: tuple[str, ...] | None = None,
 ) -> Config:
     """Return ``config`` with any non-``None`` CLI overrides applied.
 
     Centralises the "replace the field only when the flag was given" pattern
     shared by ``listen``/``clear`` so the override logic lives in one place (DRY)
-    instead of being repeated per command.
+    instead of being repeated per command. ``threads`` replaces the configured
+    thread filter only when at least one ``--thread`` flag was given (an empty
+    list means the flag was omitted and the config value is preserved).
     """
     if space_id is not None:
         config = replace(config, space_id=space_id)
@@ -98,6 +102,8 @@ def _apply_overrides(
         config = replace(config, listen_timeout=timeout)
     if trigger_prefix is not None:
         config = replace(config, trigger_prefix=trigger_prefix)
+    if threads:
+        config = replace(config, threads=threads)
     return config
 
 
@@ -229,6 +235,15 @@ def chat_send(
         "--correlation-id",
         help="Optional id linking a result back to a command.",
     ),
+    thread_key: str | None = typer.Option(
+        None,
+        "--thread-key",
+        help=(
+            "Post into a caller-keyed thread: repeated sends with the same key "
+            "land in the same thread; an unseen key starts a new one. The "
+            "created thread.name is printed to stderr for read-filtering."
+        ),
+    ),
     envelope: bool | None = typer.Option(
         None,
         "--envelope/--no-envelope",
@@ -251,7 +266,12 @@ def chat_send(
         text=text,
         correlation_id=correlation_id,
     )
-    send_webhook(config, msg)
+    created_thread = send_webhook(config, msg, thread_key=thread_key)
+    if created_thread is not None:
+        # Surface the stable thread.name on stderr so a caller can learn which
+        # thread the threadKey maps to (for 'cgc listen --thread' read-filtering)
+        # without polluting the machine-readable stdout "sent" line.
+        typer.echo(f"thread: {created_thread}", err=True)
     typer.echo("sent")
 
 
@@ -277,11 +297,28 @@ def listen(
         help="Chat space to read, e.g. spaces/AAAA (overrides config space_id).",
         autocompletion=complete_space_id,
     ),
+    thread: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--thread",
+            help=(
+                "Restrict emission to this thread resource name "
+                "(spaces/.../threads/...). Repeatable; overrides config 'threads' / "
+                "CGC_THREADS. When given, only messages in these threads are emitted."
+            ),
+            autocompletion=complete_thread,
+        ),
+    ] = None,
 ) -> None:
     """Run the inbound listener, emitting one JSON line per new message."""
     from claude_google_chat.listener import run
 
-    config = _apply_overrides(Config.load(), space_id=space_id, timeout=timeout)
+    config = _apply_overrides(
+        Config.load(),
+        space_id=space_id,
+        timeout=timeout,
+        threads=tuple(thread) if thread else None,
+    )
     config.require_keys(("space_id", "oauth_client_file"))
     raise typer.Exit(code=run(config, once=once))
 

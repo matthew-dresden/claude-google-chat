@@ -52,6 +52,7 @@ ENV_OVERRIDES: dict[str, str] = {
     "max_consecutive_errors": "CGC_MAX_CONSECUTIVE_ERRORS",
     "state_file": "CGC_STATE_FILE",
     "require_trigger": "CGC_REQUIRE_TRIGGER",
+    "threads": "CGC_THREADS",
 }
 
 _SECRET_KEYS: frozenset[str] = frozenset({"webhook_url", "token_file"})
@@ -101,6 +102,31 @@ def _parse_bool(value: object) -> bool:
     raise ValueError(f"invalid boolean config value {value!r}; expected one of: {allowed}")
 
 
+def _parse_threads(value: object) -> tuple[str, ...]:
+    """Coerce a ``threads`` config value to a tuple of thread resource names.
+
+    Accepts a TOML array of strings (as the config file yields) or a single
+    comma-separated string (as ``CGC_THREADS`` yields). Whitespace around each
+    entry is trimmed and empty entries are dropped, so ``"a, ,b"`` and
+    ``["a", "b"]`` both yield ``("a", "b")``. Any other shape (e.g. a non-string
+    list element) raises ``ValueError`` (fail fast) rather than being silently
+    coerced. An empty result is returned as an empty tuple (no thread filter).
+    """
+    if isinstance(value, (list, tuple)):
+        items: list[str] = []
+        for element in value:
+            if not isinstance(element, str):
+                raise ValueError(
+                    f"invalid threads entry {element!r}; expected a string thread resource name"
+                )
+            trimmed = element.strip()
+            if trimmed:
+                items.append(trimmed)
+        return tuple(items)
+    text = str(value)
+    return tuple(part.strip() for part in text.split(",") if part.strip())
+
+
 def _redact(value: str) -> str:
     """Redact a secret value, keeping only a short non-sensitive hint."""
     if not value:
@@ -131,6 +157,7 @@ class Config:
     max_consecutive_errors: int = DEFAULT_MAX_CONSECUTIVE_ERRORS
     state_file: str | None = None
     require_trigger: bool = DEFAULT_REQUIRE_TRIGGER
+    threads: tuple[str, ...] = ()
 
     @classmethod
     def load(
@@ -220,6 +247,7 @@ class Config:
                 if "require_trigger" in merged
                 else DEFAULT_REQUIRE_TRIGGER
             ),
+            threads=(_parse_threads(merged["threads"]) if "threads" in merged else ()),
         )
         config.require_keys(require)
         return config
@@ -254,14 +282,21 @@ class Config:
         return result
 
 
+def _toml_string(value: object) -> str:
+    """Serialise a value to a minimal double-quoted TOML basic string."""
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
 def _toml_value(value: object) -> str:
-    """Serialise a scalar value to a minimal TOML literal."""
+    """Serialise a scalar (or list-of-strings) value to a minimal TOML literal."""
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return repr(value)
-    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
+    if isinstance(value, (list, tuple)):
+        return "[" + ", ".join(_toml_string(element) for element in value) + "]"
+    return _toml_string(value)
 
 
 def merge_config_values(

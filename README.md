@@ -151,10 +151,13 @@ The user config file lives in your OS config directory (resolved via `platformdi
 | **`max_consecutive_errors`**<br>`CGC_MAX_CONSECUTIVE_ERRORS` | Consecutive transient poll failures (`listen`) tolerated before the loop fails fast with a non-zero exit. The counter resets on any successful poll (int). Optional · default `10`. |
 | **`state_file`**<br>`CGC_STATE_FILE` | Durable high-water state path for `listen`. Records the last-processed message time so a restart resumes instead of re-emitting recent history (written `0600`). Optional · default `<config_dir>/listen-state.json`. |
 | **`require_trigger`**<br>`CGC_REQUIRE_TRIGGER` | When `true` (default), `listen` emits only messages starting with `trigger_prefix`. When `false`, `listen` surfaces **every** message from a HUMAN sender (bots/own posts always excluded) — trigger-prefixed lines still parse as commands; plain lines are surfaced as a message carrying the full text. Boolean. Optional · default `true`. |
+| **`threads`**<br>`CGC_THREADS` | Optional thread filter for `listen`: when set, only messages whose `thread.name` is in this set are emitted (composes with the trigger/sender rules). TOML array of thread resource names (`spaces/.../threads/...`) in config; comma-separated list as `CGC_THREADS`; or per-run `cgc listen --thread <NAME>` (repeatable). Optional · default empty (no filter). |
 
 Secrets are never echoed: `cgc config show` masks the webhook token and token-file contents. See [docs/configuration.md](docs/configuration.md) for details.
 
 **Human vs. machine views.** By default outbound Chat messages (`cgc chat send`) are the clean, emoji-prefixed summary line alone — the JSON envelope is **not** posted into the human-facing Chat view. The machine-readable channel is the JSONL written to stdout by `cgc listen` (one envelope per line). To additionally embed the JSON envelope in the Chat text, opt in with `send_envelope = true` (or `CGC_SEND_ENVELOPE=true`), or per send with `cgc chat send --envelope`.
+
+**Thread routing.** Post into a specific thread with `cgc chat send --thread-key <KEY>` (same key → same thread; the created `thread.name` is printed to stderr for read-filtering). Read only specific threads with `cgc listen --thread <THREAD_NAME>` (repeatable; or config `threads` / `CGC_THREADS`). Each emitted `cgc listen` event carries a `thread_name` field naming the owning thread. See [docs/usage.md](docs/usage.md) and [docs/configuration.md](docs/configuration.md).
 
 ---
 

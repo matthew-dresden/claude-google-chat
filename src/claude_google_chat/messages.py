@@ -43,6 +43,10 @@ class ChatMessage:
         args: Positional arguments (for ``command`` kind).
         ts: RFC3339 UTC timestamp.
         correlation_id: Optional id to correlate request/response messages.
+        thread_name: Optional stable Chat thread resource name
+            (``spaces/.../threads/...``) the message belongs to, so a consumer
+            knows which thread to reply into. ``None`` when the message is not
+            thread-scoped or the thread is unknown.
         version: Envelope version (always ``"1"``).
     """
 
@@ -53,6 +57,7 @@ class ChatMessage:
     args: list[str] = field(default_factory=list)
     ts: str | None = None
     correlation_id: str | None = None
+    thread_name: str | None = None
     version: str = ENVELOPE_VERSION
 
 
@@ -93,6 +98,7 @@ def _envelope_dict(msg: ChatMessage) -> dict[str, object]:
         "args": list(msg.args),
         "ts": msg.ts,
         "correlation_id": msg.correlation_id,
+        "thread_name": msg.thread_name,
     }
 
 
@@ -162,6 +168,7 @@ def _parse_envelope(raw: str) -> ChatMessage:
         args=list(data.get("args", [])),
         ts=data.get("ts"),
         correlation_id=data.get("correlation_id"),
+        thread_name=data.get("thread_name"),
         version=str(data.get("version", "")),
     )
     _validate(msg)

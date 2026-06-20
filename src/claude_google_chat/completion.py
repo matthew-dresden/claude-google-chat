@@ -137,6 +137,20 @@ def complete_trigger_prefix(incomplete: str) -> list[str | tuple[str, str]]:
     return list(_filter([config.trigger_prefix], incomplete))
 
 
+@safe_completer
+def complete_thread(incomplete: str) -> list[str | tuple[str, str]]:
+    """Complete a thread resource name from the current config's ``threads``.
+
+    Suggests the configured ``threads`` (``CGC_THREADS`` / config ``threads``)
+    so ``cgc listen --thread`` can be completed from the user's known threads.
+    Returns ``[]`` when none are configured.
+    """
+    config = _load_config_safely()
+    if config is None or not config.threads:
+        return []
+    return list(_filter(config.threads, incomplete))
+
+
 def render_completion_script(prog_name: str, shell: str) -> str:
     """Return the completion script for ``shell`` (wrapping Typer/Click).
 
