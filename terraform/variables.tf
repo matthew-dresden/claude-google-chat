@@ -82,3 +82,36 @@ variable "space_id" {
   type        = string
   default     = ""
 }
+
+variable "subscription_ack_deadline_seconds" {
+  description = "Pub/Sub subscription ack deadline in seconds. The window the listener has to acknowledge a Chat event before redelivery. Must be within the Pub/Sub-allowed 10-600s range."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.subscription_ack_deadline_seconds >= 10 && var.subscription_ack_deadline_seconds <= 600
+    error_message = "subscription_ack_deadline_seconds must be between 10 and 600 (Pub/Sub limits)."
+  }
+}
+
+variable "subscription_message_retention_duration" {
+  description = "How long Pub/Sub retains unacknowledged Chat events, as a seconds duration string (e.g. '600s'). Pub/Sub allows 10 minutes to 7 days; expressed here in seconds."
+  type        = string
+  default     = "600s"
+
+  validation {
+    condition     = can(regex("^[0-9]+s$", var.subscription_message_retention_duration))
+    error_message = "subscription_message_retention_duration must be a seconds duration string like '600s'."
+  }
+}
+
+variable "chat_push_service_account" {
+  description = "Google's managed Chat/Workspace Events push service account that publishes events to the Pub/Sub topic. Override only if Google uses a different publisher account for your tenant."
+  type        = string
+  default     = "chat-api-push@system.gserviceaccount.com"
+
+  validation {
+    condition     = can(regex("^[^@]+@[^@]+$", var.chat_push_service_account))
+    error_message = "chat_push_service_account must be a service-account email address."
+  }
+}

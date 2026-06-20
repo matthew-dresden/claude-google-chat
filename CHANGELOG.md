@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`COMPLIANCE.md`** at the repo root summarizing how the project meets each applicable `CLAUDE.md` rule, the justified exceptions (finance/K8s controls N/A; documented completer error-swallowing; documented `Stop`-hook `webhook_url` requirement; env-driven poll cadence), and follow-ups.
+- **Shared poll primitive** (`polling.py`): `PollLoop` holds the `_seen`/`_since` dedup, `createTime` high-water tracking, idle-timeout run loop, and one-JSON-line-per-message stdout emit shared by `listener.py` and `serve.py` (removes the duplicated bookkeeping and timeout/run wrappers). `run_to_exit_code` centralizes the idle-timeout → stderr → non-zero-exit mapping.
+- **Shared validators** (`validation.py`): `validate_space_id` (the `spaces/<id>` rule, previously duplicated across `chat.py` and `bootstrap.py`) and `validate_create_time` (a new RFC3339 guard for the Chat list `createTime` filter, validated before interpolation).
+- **`messages.to_jsonl`**: single canonical JSON-line serializer for stdout/log output, built from the same envelope as `format_message` (replaces divergent `json.dumps(asdict(msg))` paths in the listen/serve loops so wire and log shapes cannot drift).
+- **Config-driven `webhook_timeout`** (`CGC_WEBHOOK_TIMEOUT`, default `30.0`) and **`page_size`** (`CGC_PAGE_SIZE`, default `100`), replacing the previously hardcoded webhook HTTP timeout and Chat list page size. Documented in `docs/configuration.md`.
+- **`bootstrap.SpaceNotFoundError`**: a configured-but-nonexistent/inaccessible space id (HTTP 404) now surfaces a distinct, actionable "space not found or app lacks access" error instead of the misleading Chat-app-configuration gate.
+- **Terraform inputs** `subscription_ack_deadline_seconds`, `subscription_message_retention_duration`, and `chat_push_service_account` (with validation and documented defaults), replacing hardcoded Pub/Sub tunables and the publisher service-account literal. Documented in `terraform/README.md` and `terraform.tfvars.example`.
+
+### Changed
+
+- **Narrowed Chat-app not-configured classification** (`bootstrap.py`): the configuration gate (`ChatAppNotConfiguredError`) now fires on HTTP 403 `PERMISSION_DENIED` (and the explicit "is not configured" phrasing) only; a 404 on a configured space id maps to `SpaceNotFoundError` so operators get the correct remediation.
+- **Truthful idempotent subscription result**: on HTTP 409 (subscription already exists), `bootstrap` now fetches and returns the real subscription resource name via `subscriptions.list` instead of a synthetic placeholder.
+- **DRY refactors**: `chat.py` `list_messages`/`list_messages_as_app` share one pagination helper and one credentials-parameterized service builder; `chat.py`/`auth.py`/`bootstrap.py` route missing-value errors through `Config.require_keys` (single source of truth for the "set `<ENV>` …" hint); `cgc config set` routes through the shared `merge_config_values` validation (rejecting unknown keys up front with a clean non-zero exit); the CLI `_apply_overrides` helper centralizes the serve/listen/clear override pattern and `from dataclasses import replace` is hoisted to module scope.
+- **Extracted `APP_MEMBER_NAME = "users/app"`** constant (with a comment noting it is the Chat API's fixed self-reference), replacing the inline literal.
+- **`make lint` now also runs `ruff format --check`** (via the existing `format-check` target) so formatting drift is caught locally before push, matching the CI gate.
+- **Removed prohibited suppressions** from the test suite (`# type: ignore[no-untyped-def]`, `# type: ignore[arg-type]`, `# pragma: no cover`) by fixing the root cause (typing the inner test function, using `typing.cast` for the deliberate invalid-input path, and refactoring the console-script lookup into a unit-tested helper).
+- **Removed dead code**: the unused `complete_config_value` completer and its `_CONFIG_VALUE_KEYS` constant (never wired into the CLI) and their tests.
+- **Pinned-action bump**: upgraded `actions/checkout@v4 -> @v5` and `astral-sh/setup-uv@v6 -> @v8` across the CI, release, and publish workflows to run on the current Node 24 runtime and clear the Node 20 deprecation warning.
+- **CI** (`.github/workflows/ci.yml`) now includes a version-consistency gate (`pyproject.toml` vs `src/claude_google_chat/__init__.py:__version__`) and routes format checking through the `make format-check` target.
+- **`docs/installation.md`** and **`docs/architecture.md`** document the build/release/publish pipeline, how to cut a release, how to finish PyPI setup (Trusted Publisher or API token), and the manual-publish path. `docs/installation.md` also notes the `cgc` console-command name overlap with an unrelated PyPI package and the unambiguous `python -m claude_google_chat` invocation.
+
+### Added
+
 - **Robust test suite (>90% coverage)**: unit tests for every module (`auth`, `bootstrap`, `chat`, `cli`, `config`, `listener`, `messages`, `serve`), plus `tests/integration/` flow tests and `tests/journeys/` end-to-end user-journey tests. Coverage is enforced in CI via `pytest --cov` with `--cov-fail-under=90` wired into `[tool.pytest.ini_options]`; the suite currently reports 100% line coverage. Adds the `freezegun`, `pytest-cov`, and `responses` dev dependencies (in `[dependency-groups].dev`) and ignores coverage artifacts (`.coverage`, `coverage.xml`, `htmlcov/`) in `.gitignore`.
 - **Automated tag release pipeline** (`.github/workflows/release.yml`): on push to `main`, re-validates and reads the version from `pyproject.toml` (single source of truth), then cuts an annotated git tag `v<version>` plus a GitHub Release carrying the built `dist/*` artifacts. Idempotent — skips cleanly when the tag already exists, so it cuts no new release without a version bump.
 - **PyPI publish workflow** (`.github/workflows/publish.yml`) using `pypa/gh-action-pypi-publish` with **OIDC Trusted Publishing** (no stored token) by default, plus a documented API-token fallback. Triggers only on a published GitHub Release or manual dispatch — never on the merge-validation path — and runs in a GitHub Environment named `pypi`. Inert until the maintainer completes one of the two PyPI setup options documented in `docs/installation.md`.
@@ -19,13 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pre-commit secret scan** (`.pre-commit-config.yaml`): a local gitleaks hook mirroring the CI gate; `CONTRIBUTING.md` documents `pip install pre-commit && pre-commit install` and notes that CI enforces the same scan.
 - **`.gitignore` hardening**: appended de-duped ignore patterns for credentials and local state (`config.toml`/`*config.toml`, `*.key`, `*_key.json`/`*-key.json`, `client_secret*.json`, `credentials*.json`, `service-account*.json`/`sa*.json`, `*.pem`, `.env.*`, `*.tfstate`/`*.tfstate.*`, `.terraform/`) so no secret or state can be committed, while keeping `terraform.tfvars.example` tracked.
 - **README "NOT READY" banner**: a prominent warning at the very top of `README.md` stating the project is experimental, must not be installed or relied on, is public only to use GitHub's free features, and will be rewritten with a stable `v1.0.0` when ready.
-
-### Changed
-
-- **Pinned-action bump**: upgraded `actions/checkout@v4 -> @v5` and `astral-sh/setup-uv@v6 -> @v8` across the CI, release, and publish workflows to run on the current Node 24 runtime and clear the Node 20 deprecation warning.
-
-- **CI** (`.github/workflows/ci.yml`) now includes a version-consistency gate (`pyproject.toml` vs `src/claude_google_chat/__init__.py:__version__`) and routes format checking through the `make format-check` target.
-- **`docs/installation.md`** and **`docs/architecture.md`** document the build/release/publish pipeline, how to cut a release, how to finish PyPI setup (Trusted Publisher or API token), and the manual-publish path. `docs/installation.md` also notes the `cgc` console-command name overlap with an unrelated PyPI package and the unambiguous `python -m claude_google_chat` invocation.
 
 ## [0.1.0] - 2026-06-19
 

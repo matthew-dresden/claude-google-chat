@@ -32,12 +32,14 @@ APP_SCOPES: list[str] = [
 
 
 def _require_client_file(config: Config) -> Path:
-    """Return the OAuth client secrets path, raising if it is absent."""
-    if not config.oauth_client_file:
-        raise ValueError(
-            "missing required config value 'oauth_client_file' "
-            "(set CGC_OAUTH_CLIENT_FILE or add it to config.toml)"
-        )
+    """Return the OAuth client secrets path, raising if it is absent.
+
+    Uses :meth:`Config.require_keys` for the missing-value message (single source
+    of truth, including the env-var hint) so the wording can never drift from
+    ``ENV_OVERRIDES``.
+    """
+    config.require_keys(("oauth_client_file",))
+    assert config.oauth_client_file is not None  # require_keys guarantees non-empty
     client_path = Path(config.oauth_client_file)
     if not client_path.exists():
         raise FileNotFoundError(f"OAuth client secrets file not found: {client_path}")
@@ -46,8 +48,8 @@ def _require_client_file(config: Config) -> Path:
 
 def _token_path(config: Config) -> Path:
     """Return the cached token path, raising if unconfigured."""
-    if not config.token_file:
-        raise ValueError("missing required config value 'token_file'")
+    config.require_keys(("token_file",))
+    assert config.token_file is not None  # require_keys guarantees non-empty
     return Path(config.token_file)
 
 
@@ -104,14 +106,13 @@ def _write_token(token_path: Path, creds: Credentials) -> None:
 
 
 def _require_service_account_file(config: Config) -> Path:
-    """Return the service-account key path, raising if absent or missing."""
-    if not config.service_account_file:
-        raise ValueError(
-            "missing required config value 'service_account_file' "
-            "(set CGC_SERVICE_ACCOUNT_FILE or add it to config.toml); this is the "
-            "JSON key for the Chat app's service account used by 'cgc bootstrap' "
-            "and 'cgc serve'"
-        )
+    """Return the service-account key path, raising if absent or missing.
+
+    Uses :meth:`Config.require_keys` for the missing-value message so the
+    "set <ENV> or add it to config.toml" hint is generated in one place.
+    """
+    config.require_keys(("service_account_file",))
+    assert config.service_account_file is not None  # require_keys guarantees non-empty
     sa_path = Path(config.service_account_file)
     if not sa_path.exists():
         raise FileNotFoundError(f"service account key file not found: {sa_path}")

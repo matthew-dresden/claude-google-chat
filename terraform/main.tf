@@ -22,9 +22,10 @@ locals {
 
   # Google's managed "push" service account used by the Chat API to publish
   # Workspace Events to a customer Pub/Sub topic. This is a well-known system
-  # account; if Google changes it for your tenant, override the grant member
-  # (see README "If the publisher service account differs").
-  chat_push_service_account = "chat-api-push@system.gserviceaccount.com"
+  # account exposed as an input (var.chat_push_service_account) so tenants whose
+  # publisher account differs can override it via tfvars without editing module
+  # source (see README "If the publisher service account differs").
+  chat_push_service_account = var.chat_push_service_account
 
   # Resource names are derived from inputs plus a random suffix so repeated or
   # parallel applies in the same project do not collide.
@@ -102,8 +103,8 @@ resource "google_pubsub_subscription" "chat_events" {
   name    = local.subscription_name
   topic   = google_pubsub_topic.chat_events[0].id
 
-  ack_deadline_seconds       = 30
-  message_retention_duration = "600s"
+  ack_deadline_seconds       = var.subscription_ack_deadline_seconds
+  message_retention_duration = var.subscription_message_retention_duration
   retain_acked_messages      = false
 
   expiration_policy {

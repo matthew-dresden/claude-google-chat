@@ -10,20 +10,22 @@
 
 - **`commands/*.md`** — slash commands (`chat-setup`, `chat-send`, `chat-listener`). Each becomes `/claude-google-chat:<name>`. They have side effects, so they set `disable-model-invocation: true` and invoke `cgc` via `Bash`.
 - **`skills/google-chat/SKILL.md`** — informational skill documenting the ChatOps protocol so Claude can read and produce structured messages. No side effects; model invocation stays enabled.
-- **`hooks/hooks.json`** — optional `Stop`-hook ping.
+- **`hooks/hooks.json`** — optional `Stop`-hook ping. It runs `cgc chat send`, which **requires `webhook_url`** (`CGC_WEBHOOK_URL`). Until that value is configured the hook fails fast on every session stop (correct fail-fast behaviour for the command); configure `webhook_url` before relying on the hook, or remove the hook until setup is complete.
 - **`.claude-plugin/plugin.json`** / **`marketplace.json`** — plugin and marketplace manifests.
 
 ### Python package (`src/claude_google_chat/`)
 
 | Module | Responsibility |
 |---|---|
-| `messages.py` | **Pure, I/O-free** structured message envelope. `ChatMessage` dataclass, `format_message`, `parse_message`. Single source of truth for the protocol, the status/kind constant sets, and the status→emoji map. |
-| `config.py` | **Single config authority.** `Config` frozen dataclass built by `Config.load()`; merges file + env, validates, fails fast on missing required values, and provides a redacted view for display. |
+| `messages.py` | **Pure, I/O-free** structured message envelope. `ChatMessage` dataclass, `format_message`, `parse_message`, and `to_jsonl` (the single JSON-line serializer for stdout/log output). Single source of truth for the protocol, the status/kind constant sets, and the status→emoji map. |
+| `validation.py` | **Pure shared validators** — `validate_space_id` (`spaces/<id>` form) and `validate_create_time` (RFC3339 `createTime` filter guard). Single source of truth for these format checks, imported by `chat.py` and `bootstrap.py` (DRY). |
+| `config.py` | **Single config authority.** `Config` frozen dataclass built by `Config.load()`; merges file + env, validates, fails fast on missing required values (`require_keys`), and provides a redacted view for display. Holds every tunable (incl. `webhook_timeout`, `page_size`). |
 | `auth.py` | Google auth. **User OAuth** (InstalledAppFlow): `load_credentials`/`login`. **App auth** (service account): `load_app_credentials` for `bootstrap`/`serve`. Never logs tokens or key material. |
-| `chat.py` | Network I/O to Google Chat. User-OAuth path: `send_webhook`, `list_messages`, `delete_message`. App path: `build_app_service`, `post_message_as_app`, `list_messages_as_app`. |
-| `listener.py` | `Listener(config)` with `iter_new_messages()` — event/poll-driven, env-driven cadence and idle timeout, surfaces trigger-prefixed messages, emits JSON lines to stdout. |
-| `bootstrap.py` | **Service-account (app) bootstrap** — the API-level steps Terraform can't do: join/create the Chat space, create the Workspace Events `message.created` → Pub/Sub subscription, and merge results into `config.toml`. Fails fast with exact instructions when the one manual Chat app **Configuration** console step is pending. Pure helpers (`normalize_pubsub_topic`, `build_subscription_body`, `is_not_configured_error`) are unit-tested. |
-| `serve.py` | **Always-listening responder** (`cgc serve`). One loop polling the space as the app, one responder per new owner message, structured replies posted (threaded) via the Chat API. Configurable `trigger_prefix`/`poll_interval`/`listen_timeout`/`owner_email`; fetcher/poster/responder injectable for tests. |
+| `chat.py` | Network I/O to Google Chat. User-OAuth path: `send_webhook`, `list_messages`, `delete_message`. App path: `build_app_service`, `post_message_as_app`, `list_messages_as_app`. Pagination and service construction are factored into shared private helpers (DRY); the webhook HTTP timeout and list page size are config-driven. |
+| `polling.py` | **Shared poll primitive** — `PollLoop` holds the `_seen`/`_since` dedup + high-water bookkeeping, the idle-timeout run loop, and the one-JSON-line-per-message stdout emit used by **both** `listener.py` and `serve.py`. `run_to_exit_code` maps an idle-timeout to the shared fail-fast exit code. |
+| `listener.py` | `Listener(config)` with `iter_new_messages()` — event/poll-driven (over `PollLoop`), env-driven cadence and idle timeout, surfaces trigger-prefixed messages, emits JSON lines to stdout. Differs from the responder only in its per-message predicate. |
+| `bootstrap.py` | **Service-account (app) bootstrap** — the API-level steps Terraform can't do: join/create the Chat space, create the Workspace Events `message.created` → Pub/Sub subscription, and merge results into `config.toml`. Fails fast with exact instructions when the one manual Chat app **Configuration** console step is pending (403 `PERMISSION_DENIED`); a mistyped/inaccessible space id (404) raises a distinct `SpaceNotFoundError`. Pure helpers (`normalize_pubsub_topic`, `build_subscription_body`, `is_not_configured_error`) are unit-tested. |
+| `serve.py` | **Always-listening responder** (`cgc serve`). One loop (over `PollLoop`) polling the space as the app, one responder per new owner message, structured replies posted (threaded) via the Chat API. Configurable `trigger_prefix`/`poll_interval`/`listen_timeout`/`owner_email`; fetcher/poster/responder injectable for tests. |
 | `cli.py` | Typer `app` wiring the modules into the `cgc` console script (`config`, `auth login`, `chat send`, `bootstrap`, `serve`, `listen`, `clear`, `status`, `--version`). |
 | `__main__.py` | `python -m claude_google_chat` → `cli.app()`. |
 

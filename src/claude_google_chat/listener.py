@@ -6,24 +6,32 @@ configured trigger prefix. The poll interval is a documented cadence, not a
 readiness ``sleep``; an idle ``listen_timeout`` (when > 0) causes a fail-fast
 non-zero exit with a clear diagnostic. Each emitted message is written to
 stdout as a single JSON line (12-factor logs).
+
+The dedup/high-water bookkeeping, idle-timeout run loop, and stdout JSON-line
+emission are provided by the shared :class:`claude_google_chat.polling.PollLoop`
+so this module differs from the responder only in its per-message predicate.
 """
 
 from __future__ import annotations
 
-import json
-import sys
 import time
 from collections.abc import Callable, Iterator
-from dataclasses import asdict
 from typing import Any
 
 from claude_google_chat.chat import list_messages
 from claude_google_chat.config import Config
 from claude_google_chat.messages import ChatMessage, parse_message
+from claude_google_chat.polling import PollLoop, run_to_exit_code
 
 
 class ListenerTimeout(RuntimeError):
     """Raised when the listener exceeds its configured idle timeout."""
+
+
+def _timeout_message(timeout: float) -> str:
+    return (
+        f"no new Google Chat messages within {timeout}s idle timeout (CGC_LISTEN_TIMEOUT); exiting"
+    )
 
 
 class Listener:
@@ -49,31 +57,24 @@ class Listener:
                 paces polling; it is not a readiness wait.
         """
         self._config = config
-        self._fetcher = fetcher or (lambda cfg, since: list_messages(cfg, since=since))
-        self._clock = clock
-        self._sleeper = sleeper
-        self._seen: set[str] = set()
-        self._since: str | None = None
+        resolved_fetcher = fetcher or (lambda cfg, since: list_messages(cfg, since=since))
+        self._loop = PollLoop(
+            config,
+            fetcher=lambda since: resolved_fetcher(config, since),
+            handler=self._handle,
+            timeout_exc=ListenerTimeout,
+            timeout_message=_timeout_message,
+            clock=clock,
+            sleeper=sleeper,
+        )
 
-    def _poll_once(self) -> list[ChatMessage]:
-        """Fetch and parse new trigger-prefixed messages since the last poll."""
-        raw_messages = self._fetcher(self._config, self._since)
-        new: list[ChatMessage] = []
+    def _handle(self, raw: dict[str, Any]) -> ChatMessage | None:
+        """Return a parsed message if its text starts with the trigger prefix."""
         prefix = self._config.trigger_prefix
-        for raw in raw_messages:
-            name = raw.get("name", "")
-            if name and name in self._seen:
-                continue
-            if name:
-                self._seen.add(name)
-            create_time = raw.get("createTime")
-            if create_time and (self._since is None or create_time > self._since):
-                self._since = create_time
-            text = raw.get("text", "")
-            if not text.strip().startswith(prefix):
-                continue
-            new.append(parse_message(text, trigger_prefix=prefix))
-        return new
+        text = raw.get("text", "")
+        if not text.strip().startswith(prefix):
+            return None
+        return parse_message(text, trigger_prefix=prefix)
 
     def iter_new_messages(self, *, once: bool = False) -> Iterator[ChatMessage]:
         """Yield newly-seen trigger-prefixed messages.
@@ -87,23 +88,15 @@ class Listener:
             ListenerTimeout: If ``listen_timeout`` is > 0 and no new message is
                 seen within that window.
         """
-        last_emit = self._clock()
-        while True:
-            batch = self._poll_once()
-            if batch:
-                last_emit = self._clock()
-            yield from batch
+        return self._loop.iter_emitted(once=once)
 
-            if once:
-                return
+    def run_to_stdout(self, *, once: bool = False) -> list[ChatMessage]:
+        """Emit each new message as one JSON line to stdout; return the list.
 
-            timeout = self._config.listen_timeout
-            if timeout > 0 and (self._clock() - last_emit) >= timeout:
-                raise ListenerTimeout(
-                    f"no new Google Chat messages within {timeout}s idle timeout "
-                    "(CGC_LISTEN_TIMEOUT); exiting"
-                )
-            self._sleeper(self._config.poll_interval)
+        Raises:
+            ListenerTimeout: on idle-timeout expiry (fail fast).
+        """
+        return self._loop.run(once=once)
 
 
 def run(config: Config, *, once: bool = False) -> int:
@@ -113,11 +106,4 @@ def run(config: Config, *, once: bool = False) -> int:
     non-zero on idle timeout (fail fast with a clear diagnostic on stderr).
     """
     listener = Listener(config)
-    try:
-        for msg in listener.iter_new_messages(once=once):
-            sys.stdout.write(json.dumps(asdict(msg), sort_keys=True) + "\n")
-            sys.stdout.flush()
-    except ListenerTimeout as exc:
-        sys.stderr.write(f"{exc}\n")
-        return 1
-    return 0
+    return run_to_exit_code(lambda: listener.run_to_stdout(once=once), ListenerTimeout)

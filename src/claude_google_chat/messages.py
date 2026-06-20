@@ -111,6 +111,17 @@ def format_message(msg: ChatMessage) -> str:
     return f"{summary}\n```\n{envelope}\n```"
 
 
+def to_jsonl(msg: ChatMessage) -> str:
+    """Serialise a message to a single canonical JSON line (no trailing newline).
+
+    The single source of truth for the stdout/log JSON shape of a
+    :class:`ChatMessage`, built from the same :func:`_envelope_dict` envelope as
+    :func:`format_message` so the on-the-wire and log representations never drift
+    as dataclass fields change. Used by the ``listen`` and ``serve`` loops.
+    """
+    return json.dumps(_envelope_dict(msg), sort_keys=True)
+
+
 def _extract_json_block(text: str) -> str | None:
     """Return the contents of the first fenced code block, or ``None``."""
     start = text.find("```")
