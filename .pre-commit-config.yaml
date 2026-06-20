@@ -1,0 +1,16 @@
+# Pre-commit hooks for claude-google-chat.
+#
+# Local secret scanning so credentials can never be committed. The same scan
+# runs in CI (.github/workflows/gitleaks.yml), so the hook is a fast local
+# mirror of the gate, not the only line of defence.
+#
+# Enable locally:
+#   pip install pre-commit && pre-commit install
+#
+# gitleaks reads the repo-root .gitleaks.toml automatically, so the known-safe
+# placeholders and test fixtures are allowlisted here exactly as they are in CI.
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

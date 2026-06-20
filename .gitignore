@@ -20,4 +20,27 @@ token.json
 .env
 *.local.*
 
+# Secrets / credentials / local state (public-repo hardening).
+# Nothing here may ever be committed. These complement the
+# token.json / .env / *.local.* entries above (kept for back-compat).
+.env.*
+config.toml
+*config.toml
+*.key
+*_key.json
+*-key.json
+client_secret*.json
+credentials*.json
+service-account*.json
+sa*.json
+*.pem
+
+# Terraform state and local provider data (real, environment-specific values).
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Keep the committed Terraform variables template tracked.
+!terraform.tfvars.example
+
 # Note: uv.lock is committed intentionally (do not ignore).

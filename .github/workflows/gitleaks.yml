@@ -1,0 +1,51 @@
+name: gitleaks
+
+# Secret scanning for a PUBLIC repository.
+#
+# Uses the gitleaks BINARY (a pinned upstream release downloaded in-step),
+# NOT the licensed gitleaks-action. The action requires a paid
+# GITLEAKS_LICENSE for organization accounts; the open-source binary does
+# not, so this workflow runs with no license and no stored secrets.
+#
+# The scan honours .gitleaks.toml at the repo root, which extends the default
+# ruleset and allowlists the project's known-safe placeholders and test
+# fixtures. A non-zero exit code (a real finding) fails the job.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    name: Scan for secrets
+    runs-on: ubuntu-latest
+    env:
+      # Pin the gitleaks release so scans are reproducible. Bump deliberately.
+      GITLEAKS_VERSION: "8.30.1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks (pinned binary)
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+          tmp="$(mktemp -d)"
+          curl --fail --silent --show-error --location "$url" --output "${tmp}/${tarball}"
+          tar -xzf "${tmp}/${tarball}" -C "${tmp}" gitleaks
+          install -m 0755 "${tmp}/gitleaks" /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Run gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          gitleaks detect --source . --redact --exit-code 1

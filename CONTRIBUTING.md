@@ -31,6 +31,34 @@ Run `make all` before opening a pull request. CI runs the same checks (using `ru
 
 ---
 
+## Secret scanning (pre-commit)
+
+This is a **public** repository, so secrets must never be committed. A
+[gitleaks](https://github.com/gitleaks/gitleaks) pre-commit hook scans staged
+changes locally before each commit. Install it once after cloning:
+
+```bash
+pip install pre-commit && pre-commit install
+```
+
+After `pre-commit install`, the hook runs automatically on every `git commit`
+and blocks the commit if it detects a secret. To scan the whole tree on demand:
+
+```bash
+pre-commit run --all-files
+```
+
+The hook config lives in `.pre-commit-config.yaml` and the scan rules in
+`.gitleaks.toml` (which extends the gitleaks defaults and allowlists the
+project's known-safe placeholders and `tests/data/*.toml` fixtures).
+
+**CI also enforces this.** The `gitleaks` GitHub Actions workflow
+(`.github/workflows/gitleaks.yml`) runs the same scan on every push and pull
+request using the gitleaks binary, so a missing local hook cannot let a secret
+through. Do not bypass either check.
+
+---
+
 ## Pull request guidelines
 
 - **Keep changes focused.** One logical change per PR. Update docs in the **same** PR as the code they describe — documentation is part of "done", not a follow-up.
