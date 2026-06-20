@@ -82,6 +82,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --cov=src/claude_google_chat --cov-report=term-missing --cov-fail-under=90"
+markers = [
+    "real_oauth_indirection: opt out of the OAuth-login stub to test the real indirection",
+]
 
 [dependency-groups]
 dev = [

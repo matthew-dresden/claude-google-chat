@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
@@ -56,9 +57,10 @@ from claude_google_chat.config import (
 from claude_google_chat.messages import ChatMessage
 
 APP_EPILOG = (
-    "Enable tab completion with 'cgc completion bash --install' (or zsh/fish), "
-    "or Typer's native 'cgc --install-completion'. Configuration lives in the OS "
-    "config directory; run 'cgc setup' to see the path and required keys."
+    "New here? Run 'cgc setup' for guided onboarding (project, Chat API, auth, "
+    "webhook, end-to-end verify) and 'cgc doctor' for a RED/GREEN prerequisite "
+    "checklist. Enable tab completion with 'cgc completion bash --install' (or "
+    "zsh/fish), or Typer's native 'cgc --install-completion'."
 )
 
 app = typer.Typer(
@@ -287,13 +289,64 @@ def chat_send(
 
 
 @app.command("setup")
-def setup() -> None:
-    """Print the configuration file location and required keys."""
-    path = default_config_path()
-    typer.echo(f"config file: {path}")
-    typer.echo("required for send:  webhook_url (CGC_WEBHOOK_URL)")
-    typer.echo("required for read:  space_id (CGC_SPACE_ID), oauth_client_file")
-    typer.echo("use 'cgc config set <key> <value>' to populate")
+def setup(
+    reauth: bool = typer.Option(
+        False,
+        "--reauth",
+        help="Only redo authentication (skip project/API/webhook steps).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show the actions that would run without changing anything.",
+    ),
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="Only run the end-to-end send/read round-trip check.",
+    ),
+) -> None:
+    """Guided onboarding wizard: project, Chat API, auth, webhook, verify.
+
+    Idempotent and resumable: each step is skipped when already satisfied and
+    re-running fixes only the gaps. Authentication is ADC-first (no OAuth client
+    to create) with a guided OAuth-client fallback; the final step verifies a
+    real send + read-back round trip before declaring success. Exits non-zero
+    with an actionable message naming which step to re-run on any failure.
+    """
+    from claude_google_chat.setup import SetupOptions, TyperSetupIO, run_setup
+
+    io = TyperSetupIO(
+        _prompt=lambda message: typer.prompt(message),
+        _emit=typer.echo,
+        _confirm=lambda message: typer.confirm(message),
+    )
+    exit_code = run_setup(
+        io=io,
+        options=SetupOptions(reauth=reauth, dry_run=dry_run, verify=verify),
+        env=dict(os.environ),
+    )
+    raise typer.Exit(code=exit_code)
+
+
+@app.command("doctor")
+def doctor() -> None:
+    """Print a RED/GREEN prerequisite checklist with the exact fix per red line.
+
+    Checks gcloud (installed / logged in / project selected / Chat API enabled),
+    OAuth/ADC credentials (present, valid, and carrying every required Chat
+    scope), the incoming-webhook and space configuration, and the config file.
+    Exits non-zero when any required check fails, so it doubles as a health gate.
+    """
+    from claude_google_chat.doctor import run_doctor
+
+    use_colour = sys.stdout.isatty()
+    exit_code = run_doctor(
+        env=dict(os.environ),
+        emit=typer.echo,
+        use_colour=use_colour,
+    )
+    raise typer.Exit(code=exit_code)
 
 
 def _session_registry(config: Config) -> SessionRegistry:

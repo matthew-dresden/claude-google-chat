@@ -130,11 +130,26 @@ A typical multi-agent setup: run `cgc connect` in each repo/branch (the first be
 
 ### `cgc setup`
 
-Print the config file location and the keys required for each operation.
+Guided, **idempotent, resumable** onboarding wizard — one command takes a fresh machine to a working two-way integration. Each step is verified before moving on, and re-running fixes only the gaps.
 
 ```bash
-cgc setup
+cgc setup              # full guided onboarding
+cgc setup --reauth     # only redo authentication
+cgc setup --dry-run    # show the actions that would run, change nothing
+cgc setup --verify     # only run the end-to-end send/read round-trip check
 ```
+
+Steps: detect gcloud (or print install link + console deep-links for manual setup) → create/select a project → enable the Chat API and **poll until ENABLED** (active readiness, not `sleep`; timeout from `CGC_SETUP_ENABLE_TIMEOUT`) → authenticate **ADC-first** (`gcloud auth application-default login`, no OAuth client to create) with a **guided OAuth-client fallback**, then verify the token carries every required Chat scope (re-auth on scope-drop) → prompt for and validate the webhook URL (token never echoed) → **verify end-to-end** with a real send + read-back round trip. On any failure it prints a concise, actionable error (no traceback or token) naming which step to re-run.
+
+### `cgc doctor`
+
+Print a RED/GREEN (`[PASS]`/`[FAIL]`) checklist of every prerequisite, with the **exact fix command** for each red line. Exits non-zero if any required check fails, so it doubles as a health gate.
+
+```bash
+cgc doctor
+```
+
+Checks: gcloud installed / logged in / project selected / Chat API enabled / OAuth-ADC credentials present & valid / token carries the required Chat scope / `webhook_url` configured & well-formed (token never echoed) / `space_id` configured / config file present. The config file path is printed in the footer.
 
 ### `cgc status`
 

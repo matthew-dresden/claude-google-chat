@@ -29,6 +29,7 @@ from typer.testing import CliRunner
 
 from claude_google_chat import __version__, cli
 from claude_google_chat.messages import DEFAULT_TRIGGER_PREFIX, ChatMessage
+from claude_google_chat.setup import SetupOptions
 
 WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=TEST_KEY&token=TEST_TOKEN"
 SPACE_ID = "spaces/AAAA"
@@ -492,15 +493,86 @@ def test_status_reports_not_ready_when_empty(
     assert "read ready: False" in result.stdout
 
 
-def test_setup_prints_config_path_and_keys(
+def test_setup_delegates_to_run_setup_and_propagates_exit_code(
     runner: CliRunner,
     cli_config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    result = runner.invoke(cli.app, ["setup"])
+    """`cgc setup` builds a SetupIO + options and surfaces run_setup's exit code."""
+    captured: dict[str, object] = {}
+
+    def _fake_run_setup(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr("claude_google_chat.setup.run_setup", _fake_run_setup)
+    result = runner.invoke(cli.app, ["setup", "--dry-run"])
     assert result.exit_code == 0
-    assert str(cli_config_path) in result.stdout
-    assert "webhook_url" in result.stdout
-    assert "space_id" in result.stdout
+    options = captured["options"]
+    assert isinstance(options, SetupOptions)
+    assert options.dry_run is True
+    assert options.reauth is False
+    assert options.verify is False
+
+
+def test_setup_nonzero_exit_propagates(
+    runner: CliRunner,
+    cli_config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claude_google_chat.setup.run_setup", lambda **kwargs: 1)
+    result = runner.invoke(cli.app, ["setup", "--verify"])
+    assert result.exit_code == 1
+
+
+def test_setup_reauth_flag_forwarded(
+    runner: CliRunner,
+    cli_config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        "claude_google_chat.setup.run_setup",
+        lambda **kwargs: captured.update(kwargs) or 0,
+    )
+    result = runner.invoke(cli.app, ["setup", "--reauth"])
+    assert result.exit_code == 0
+    options = captured["options"]
+    assert isinstance(options, SetupOptions)
+    assert options.reauth is True
+
+
+def test_doctor_delegates_and_propagates_exit_code(
+    runner: CliRunner,
+    cli_config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`cgc doctor` calls run_doctor and exits with its code."""
+    captured: dict[str, object] = {}
+
+    def _fake_run_doctor(**kwargs: object) -> int:
+        captured.update(kwargs)
+        # Emit through the injected sink to prove it is wired.
+        emit = kwargs["emit"]
+        assert callable(emit)
+        emit("doctor ran")
+        return 0
+
+    monkeypatch.setattr("claude_google_chat.doctor.run_doctor", _fake_run_doctor)
+    result = runner.invoke(cli.app, ["doctor"])
+    assert result.exit_code == 0
+    assert "doctor ran" in result.stdout
+    assert "env" in captured
+
+
+def test_doctor_nonzero_exit_propagates(
+    runner: CliRunner,
+    cli_config_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("claude_google_chat.doctor.run_doctor", lambda **kwargs: 1)
+    result = runner.invoke(cli.app, ["doctor"])
+    assert result.exit_code == 1
 
 
 # --------------------------------------------------------------------------- #
