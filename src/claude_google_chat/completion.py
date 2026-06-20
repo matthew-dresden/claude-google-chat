@@ -211,11 +211,20 @@ def rc_path_for_shell(shell: str, home: Path | None = None) -> Path:
 def install_completion_line(prog_name: str, shell: str, home: Path | None = None) -> Path:
     """Append an idempotent ``eval`` completion line to ``shell``'s rc file.
 
-    The line evaluates the program's own completion source at shell start-up
-    (``eval "$(env _CGC_COMPLETE=complete_<shell> cgc)"``), so the installed
+    The line evaluates the program's own completion *source* at shell start-up
+    (``eval "$(env _CGC_COMPLETE=source_<shell> cgc)"``), so the installed
     completion always matches the installed CLI version — there is no static
     snapshot to drift. Re-running is a no-op when the exact line is already
     present. Returns the rc file path written.
+
+    The instruction is ``source_<shell>`` (emit the completion-registration
+    script), never ``complete_<shell>`` (perform a single completion). The
+    ``complete_*`` instruction reads ``COMP_WORDS``/``_TYPER_COMPLETE_ARGS`` from
+    the environment — values the shell only sets while a ``<TAB>`` is in flight.
+    Putting ``complete_*`` in an rc file therefore runs the completion path at
+    plain shell start-up with those variables absent, which raises and dumps a
+    traceback into the user's terminal on every new shell. ``source_*`` has no
+    such dependency and emits a clean registration script.
 
     Raises ``ValueError`` (fail fast) for an unsupported shell.
     """
@@ -227,9 +236,9 @@ def install_completion_line(prog_name: str, shell: str, home: Path | None = None
     complete_var = _complete_var(prog_name)
     if shell == "fish":
         # fish sources the generated script directly rather than via ``eval``.
-        eval_line = f"env {complete_var}=complete_fish {prog_name} | source"
+        eval_line = f"env {complete_var}=source_fish {prog_name} | source"
     else:
-        eval_line = f'eval "$(env {complete_var}=complete_{shell} {prog_name})"'
+        eval_line = f'eval "$(env {complete_var}=source_{shell} {prog_name})"'
 
     marker = f"# {prog_name} shell completion"
     block = f"{marker}\n{eval_line}\n"
