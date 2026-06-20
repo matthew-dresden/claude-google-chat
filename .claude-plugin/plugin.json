@@ -6,7 +6,7 @@
   "description": "Two-way Google Chat ChatOps for Claude Code: outbound status pings via incoming webhook, inbound commands via the Chat API, an event-driven listener, and a structured message protocol.",
   "author": {
     "name": "Matthew Dresden",
-    "email": "matthew@brimcapitalgroup.com",
+    "email": "admin@dresdencraft.com",
     "url": "https://github.com/matthew-dresden"
   },
   "homepage": "https://github.com/matthew-dresden/claude-google-chat",
