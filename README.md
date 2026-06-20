@@ -134,15 +134,15 @@ The user config file lives in your OS config directory (resolved via `platformdi
 - macOS: `~/Library/Application Support/claude-google-chat/config.toml`
 - Windows: `%LOCALAPPDATA%\claude-google-chat\config.toml`
 
-| Key (`config.toml`) | Env var | Required | Default | Purpose |
-|---|---|---|---|---|
-| `webhook_url` | `CGC_WEBHOOK_URL` | yes (for send) | — | Google Chat incoming webhook URL |
-| `space_id` | `CGC_SPACE_ID` | yes (for read/listen) | — | Chat space resource id (e.g. `spaces/AAAA`) |
-| `oauth_client_file` | `CGC_OAUTH_CLIENT_FILE` | yes (for read/listen) | — | Path to Google OAuth client secrets JSON |
-| `token_file` | `CGC_TOKEN_FILE` | no | `<config_dir>/token.json` | Cached OAuth user token |
-| `trigger_prefix` | `CGC_TRIGGER_PREFIX` | no | `claude-command:` | Inbound command trigger |
-| `poll_interval` | `CGC_POLL_INTERVAL` | no | `2.0` (seconds) | Listener poll interval |
-| `listen_timeout` | `CGC_LISTEN_TIMEOUT` | no | `0` (0 = run forever) | Listener idle timeout |
+| Setting · env var | Description |
+| --- | --- |
+| **`webhook_url`**<br>`CGC_WEBHOOK_URL` | Google Chat incoming webhook URL. **Required** for `send`. |
+| **`space_id`**<br>`CGC_SPACE_ID` | Chat space id, e.g. `spaces/AAAA`. **Required** for read/listen. |
+| **`oauth_client_file`**<br>`CGC_OAUTH_CLIENT_FILE` | Path to Google OAuth client secrets JSON. **Required** for read/listen. |
+| **`token_file`**<br>`CGC_TOKEN_FILE` | Cached OAuth user token (path). Optional · default `<config_dir>/token.json`. |
+| **`trigger_prefix`**<br>`CGC_TRIGGER_PREFIX` | Inbound command trigger. Optional · default `claude-command:`. |
+| **`poll_interval`**<br>`CGC_POLL_INTERVAL` | Listener poll interval, seconds (float). Optional · default `2.0`. |
+| **`listen_timeout`**<br>`CGC_LISTEN_TIMEOUT` | Listener idle timeout, seconds (float). Optional · default `0` (run forever). |
 
 Secrets are never echoed: `cgc config show` masks the webhook token and token-file contents. See [docs/configuration.md](docs/configuration.md) for details.
 
