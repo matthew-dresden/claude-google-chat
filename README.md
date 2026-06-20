@@ -61,8 +61,8 @@ Send-only operation needs nothing but an incoming webhook URL. Reading inbound c
 ## Quickstart
 
 ```bash
-# 1. Install the CLI
-uv tool install claude-google-chat
+# 1. Install the CLI (pipx recommended)
+pipx install claude-google-chat
 
 # 2. Configure (webhook URL, space, OAuth, trigger prefix)
 cgc config init
@@ -101,31 +101,31 @@ The plugin commands invoke the `cgc` CLI, so install the CLI as well (below). Th
 
 ### As a CLI (Python)
 
-uv (recommended):
+**pipx (recommended):**
 
 ```bash
-uv tool install claude-google-chat        # from PyPI once published
+pipx install claude-google-chat        # from PyPI once published
+cgc --help
+```
 
-# or from source:
+pipx installs the CLI into its own isolated environment and puts `cgc` on your `PATH` — the recommended way to run a Python command-line tool.
+
+<details>
+<summary>Alternatives — uv, pip, or from source</summary>
+
+```bash
+# uv
+uv tool install claude-google-chat
+
+# pip
+pip install claude-google-chat
+
+# from source
 git clone https://github.com/matthew-dresden/claude-google-chat
 cd claude-google-chat
-uv sync
-uv run cgc --help
+uv sync && uv run cgc --help
 ```
-
-pipx:
-
-```bash
-pipx install claude-google-chat
-cgc --help
-```
-
-pip:
-
-```bash
-pip install claude-google-chat
-cgc --help
-```
+</details>
 
 See [docs/installation.md](docs/installation.md) for the full Google Cloud setup (OAuth client + incoming webhook) and prerequisites.
 
