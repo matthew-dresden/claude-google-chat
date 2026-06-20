@@ -79,4 +79,11 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q --cov=src/claude_google_chat --cov-report=term-missing --cov-fail-under=90"
+
+[dependency-groups]
+dev = [
+    "freezegun>=1.5.5",
+    "pytest-cov>=7.1.0",
+    "responses>=0.26.1",
+]
