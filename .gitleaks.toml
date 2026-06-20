@@ -19,7 +19,6 @@ description = "Known-safe placeholders and test fixtures (no real secrets)."
 # under tests/data/ carry deliberately fake webhook URLs and dummy tokens.
 paths = [
   '''tests/data/.*\.toml$''',
-  '''terraform/templates/config\.toml\.tftpl$''',
 ]
 
 # Literal/regex matches for the documented dummy values that appear in fixtures,

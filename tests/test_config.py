@@ -62,18 +62,18 @@ def test_show_masks_secrets(data_dir: Path) -> None:
 
 def test_merge_overwrites_and_preserves() -> None:
     existing = {"trigger_prefix": "claude:", "space_id": "spaces/OLD"}
-    updates = {"space_id": "spaces/NEW", "pubsub_topic": "projects/p/topics/t"}
+    updates = {"space_id": "spaces/NEW", "webhook_url": "https://example/x"}
     merged = merge_config_values(existing, updates)
     assert merged["space_id"] == "spaces/NEW"
     assert merged["trigger_prefix"] == "claude:"
-    assert merged["pubsub_topic"] == "projects/p/topics/t"
+    assert merged["webhook_url"] == "https://example/x"
 
 
 def test_merge_skips_none_updates() -> None:
     existing = {"space_id": "spaces/KEEP"}
-    merged = merge_config_values(existing, {"space_id": None, "project_id": "p1"})
+    merged = merge_config_values(existing, {"space_id": None, "trigger_prefix": "p:"})
     assert merged["space_id"] == "spaces/KEEP"
-    assert merged["project_id"] == "p1"
+    assert merged["trigger_prefix"] == "p:"
 
 
 def test_merge_rejects_unknown_key() -> None:
@@ -90,7 +90,7 @@ def test_merge_and_write_round_trips(tmp_path: Path) -> None:
     assert reloaded.trigger_prefix == "p:"
 
 
-def test_service_account_redacted() -> None:
-    config = Config(service_account_file="/secret/path/key.json")
+def test_token_file_redacted() -> None:
+    config = Config(token_file="/secret/path/token.json")
     redacted = config.redacted()
-    assert redacted["service_account_file"] != "/secret/path/key.json"
+    assert redacted["token_file"] != "/secret/path/token.json"

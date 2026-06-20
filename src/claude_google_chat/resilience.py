@@ -1,6 +1,6 @@
 """Transient-vs-fatal error classification for the poll loop.
 
-A long-running ``cgc listen`` / ``cgc serve`` process must survive the routine
+A long-running ``cgc listen`` process must survive the routine
 turbulence of a remote API: a dropped connection, a socket timeout, or a Chat
 API ``429``/``5xx``. Today any such error propagates out of the poll loop and
 kills the listener. This module is the single source of truth for deciding which

@@ -123,7 +123,7 @@ def to_jsonl(msg: ChatMessage) -> str:
     The single source of truth for the stdout/log JSON shape of a
     :class:`ChatMessage`, built from the same :func:`_envelope_dict` envelope as
     :func:`format_message` so the on-the-wire and log representations never drift
-    as dataclass fields change. Used by the ``listen`` and ``serve`` loops.
+    as dataclass fields change. Used by the ``listen`` loop.
     """
     return json.dumps(_envelope_dict(msg), sort_keys=True)
 

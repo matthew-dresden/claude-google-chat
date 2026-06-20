@@ -1,11 +1,11 @@
 """Shared Google Chat polling primitive.
 
-Both the inbound listener (``cgc listen``) and the always-listening responder
-(``cgc serve``) poll the same space on an env-driven cadence and need identical
-bookkeeping: per-message ``name`` dedup, ``createTime`` high-water tracking, an
-idle-timeout-with-monotonic-clock run loop, and one-JSON-line-per-message stdout
-emission (12-factor logs). This module holds that single implementation so the
-two callers differ only in their per-message predicate and action (DRY).
+The inbound listener (``cgc listen``) polls the space on an env-driven cadence
+and needs consistent bookkeeping: per-message ``name`` dedup, ``createTime``
+high-water tracking, an idle-timeout-with-monotonic-clock run loop, and
+one-JSON-line-per-message stdout emission (12-factor logs). This module holds
+that single implementation so any caller plugs in only a per-message predicate
+and action (DRY).
 
 The poll cadence is a documented, env-driven cadence (``poll_interval``), not a
 readiness ``sleep``; the idle ``listen_timeout`` (when > 0) fails fast with a
@@ -228,8 +228,8 @@ def run_to_exit_code(
     """Run ``run_loop``, mapping idle-timeout / exhaustion to a non-zero exit code.
 
     Single boundary that converts a fail-fast loop exception into the
-    fail-fast-with-diagnostic-on-stderr exit code shared by ``cgc listen`` and
-    ``cgc serve``: returns 0 on clean completion, 1 on idle-timeout expiry or on
+    fail-fast-with-diagnostic-on-stderr exit code used by ``cgc listen``:
+    returns 0 on clean completion, 1 on idle-timeout expiry or on
     consecutive-error exhaustion (the diagnostic is the exception's message).
     Keeps the per-command ``run()`` wrappers from duplicating the same
     try/except/stderr/return-1 shape (DRY).

@@ -7,9 +7,8 @@ offline, deterministically, and without any real credentials:
   OS config directory).
 - The **Google Chat API ``service``** is a programmable fake that mirrors the
   ``googleapiclient`` chained-builder shape (``spaces().messages().list()`` /
-  ``create()`` / ``delete()`` / ``list_next()``, ``spaces().create()``,
-  ``spaces().members().create()``) so ``chat.py``/``serve.py``/``bootstrap.py``
-  can be driven without network access.
+  ``create()`` / ``delete()`` / ``list_next()``) so ``chat.py`` can be driven
+  without network access.
 - The **incoming webhook POST** is intercepted with the ``responses`` library so
   ``chat.send_webhook`` exercises the real ``requests`` call path.
 - A **frozen clock** (``freezegun``) pins ``messages._now_rfc3339`` so timestamps
@@ -41,10 +40,8 @@ from claude_google_chat.messages import DEFAULT_TRIGGER_PREFIX
 
 FROZEN_INSTANT = "2026-06-20T12:00:00Z"
 SPACE_ID = "spaces/AAAA"
-OWNER_EMAIL = "owner@example.com"
+SENDER_EMAIL = "owner@example.com"
 WEBHOOK_URL = "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=TEST_KEY&token=TEST_TOKEN"
-PROJECT_ID = "test-project"
-PUBSUB_TOPIC = "projects/test-project/topics/chat-events"
 
 
 # --------------------------------------------------------------------------- #
@@ -128,7 +125,7 @@ def write_config_file(config_path: Path) -> Callable[..., Path]:
 def make_config() -> Callable[..., Config]:
     """Return a factory producing a realistic in-memory :class:`Config`.
 
-    Defaults cover the common app-auth + space + webhook setup; pass overrides
+    Defaults cover the common user-OAuth + space + webhook setup; pass overrides
     (or ``None`` to clear a field) for the specific path under test. No file or
     environment I/O — input-driven for fast, isolated unit tests.
     """
@@ -139,11 +136,7 @@ def make_config() -> Callable[..., Config]:
             "space_id": SPACE_ID,
             "oauth_client_file": "/tmp/client_secret.json",
             "token_file": "/tmp/token.json",
-            "service_account_file": "/tmp/sa.json",
             "trigger_prefix": DEFAULT_TRIGGER_PREFIX,
-            "owner_email": OWNER_EMAIL,
-            "project_id": PROJECT_ID,
-            "pubsub_topic": PUBSUB_TOPIC,
         }
         base.update(overrides)
         return Config(**base)
@@ -194,7 +187,7 @@ def make_raw_message() -> Callable[..., dict[str, Any]]:
         name: str = f"{SPACE_ID}/messages/1",
         text: str = f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
         sender_type: str = "HUMAN",
-        email: str | None = OWNER_EMAIL,
+        email: str | None = SENDER_EMAIL,
         create_time: str = FROZEN_INSTANT,
         thread: str | None = f"{SPACE_ID}/threads/T1",
     ) -> dict[str, Any]:
@@ -212,12 +205,12 @@ def make_raw_message() -> Callable[..., dict[str, Any]]:
 
 @pytest.fixture
 def human_trigger_message(make_raw_message: Callable[..., dict[str, Any]]) -> dict[str, Any]:
-    """A HUMAN owner message that starts with the trigger prefix (should handle)."""
+    """A HUMAN message that starts with the trigger prefix (should be emitted)."""
     return make_raw_message(
         name=f"{SPACE_ID}/messages/human-1",
         text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
         sender_type="HUMAN",
-        email=OWNER_EMAIL,
+        email=SENDER_EMAIL,
     )
 
 
@@ -228,7 +221,7 @@ def human_plain_message(make_raw_message: Callable[..., dict[str, Any]]) -> dict
         name=f"{SPACE_ID}/messages/human-2",
         text="just chatting, no command here",
         sender_type="HUMAN",
-        email=OWNER_EMAIL,
+        email=SENDER_EMAIL,
         thread=None,
     )
 
@@ -241,18 +234,6 @@ def bot_trigger_message(make_raw_message: Callable[..., dict[str, Any]]) -> dict
         text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
         sender_type="BOT",
         email=None,
-        thread=None,
-    )
-
-
-@pytest.fixture
-def non_owner_trigger_message(make_raw_message: Callable[..., dict[str, Any]]) -> dict[str, Any]:
-    """A HUMAN trigger message from a non-owner (ignored when owner_email set)."""
-    return make_raw_message(
-        name=f"{SPACE_ID}/messages/intruder-1",
-        text=f"{DEFAULT_TRIGGER_PREFIX} deploy prod",
-        sender_type="HUMAN",
-        email="intruder@example.com",
         thread=None,
     )
 
@@ -308,21 +289,8 @@ class _FakeMessages:
         return _FakeExecutable({})
 
 
-class _FakeMembers:
-    """Fake of ``service.spaces().members()`` supporting create."""
-
-    def __init__(self, service: FakeChatService) -> None:
-        self._service = service
-
-    def create(self, **kwargs: Any) -> _FakeExecutable:
-        self._service.member_create_calls.append(kwargs)
-        if self._service.member_create_error is not None:
-            return _FakeExecutable(self._service.member_create_error)
-        return _FakeExecutable(self._service.member_create_result)
-
-
 class _FakeSpaces:
-    """Fake of ``service.spaces()`` exposing messages/members/create."""
+    """Fake of ``service.spaces()`` exposing messages."""
 
     def __init__(self, service: FakeChatService) -> None:
         self._service = service
@@ -330,23 +298,13 @@ class _FakeSpaces:
     def messages(self) -> _FakeMessages:
         return _FakeMessages(self._service)
 
-    def members(self) -> _FakeMembers:
-        return _FakeMembers(self._service)
-
-    def create(self, **kwargs: Any) -> _FakeExecutable:
-        self._service.space_create_calls.append(kwargs)
-        if self._service.space_create_error is not None:
-            return _FakeExecutable(self._service.space_create_error)
-        return _FakeExecutable(self._service.space_create_result)
-
 
 class FakeChatService:
     """Programmable stand-in for a built googleapiclient Chat ``Resource``.
 
-    Mirrors the chained-builder access patterns used across the package:
+    Mirrors the chained-builder access patterns used by ``chat.py``:
     ``svc.spaces().messages().list(...).execute()`` and ``.list_next(...)``,
-    ``.create(...)``, ``.delete(...)``, plus ``svc.spaces().create(...)`` and
-    ``svc.spaces().members().create(...)``.
+    ``.create(...)``, and ``.delete(...)``.
 
     Configure return values / errors via the public attributes and assert on the
     recorded ``*_calls`` lists. Errors are raised from ``execute()`` to model the
@@ -364,18 +322,10 @@ class FakeChatService:
 
         self.delete_error: Exception | None = None
 
-        self.space_create_result: dict[str, Any] = {"name": SPACE_ID}
-        self.space_create_error: Exception | None = None
-
-        self.member_create_result: dict[str, Any] = {"name": f"{SPACE_ID}/members/app"}
-        self.member_create_error: Exception | None = None
-
         # Recorded calls for assertions.
         self.list_calls: list[dict[str, Any]] = []
         self.create_calls: list[dict[str, Any]] = []
         self.delete_calls: list[dict[str, Any]] = []
-        self.space_create_calls: list[dict[str, Any]] = []
-        self.member_create_calls: list[dict[str, Any]] = []
 
     def spaces(self) -> _FakeSpaces:
         return _FakeSpaces(self)
@@ -385,9 +335,8 @@ class FakeChatService:
 def fake_chat_service() -> FakeChatService:
     """Return a fresh, programmable fake Chat API ``service``.
 
-    Inject it via the ``service=`` parameter on ``chat.post_message_as_app`` /
-    ``chat.list_messages_as_app``, or as the ``chat`` argument to bootstrap
-    helpers, so no real discovery build or network call occurs.
+    Inject it by monkeypatching ``chat._build_service`` so no real discovery
+    build or network call occurs.
     """
     return FakeChatService()
 
