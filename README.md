@@ -74,7 +74,12 @@ cgc chat send --status success --text "Build is green"
 # 4. (optional) Authenticate and start the inbound listener
 cgc auth login
 cgc listen
+
+# 5. (optional) Enable shell tab completion
+cgc completion bash --install   # or: zsh / fish, or `cgc --install-completion`
 ```
+
+Tab completion covers commands, options, and dynamic values (config keys, `--status` labels, shell names, file paths, and config-derived `space_id`/`trigger_prefix`). See the [Shell completion guide](docs/SHELL_COMPLETION.md) for bash/zsh setup (auto-updating and static-file installs) and prerequisites.
 
 From inside Claude Code, run the setup command and you are ready:
 
@@ -213,6 +218,7 @@ Data flow: Claude Code → `/claude-google-chat:*` command → `cgc` CLI → Goo
 - [Installation](docs/installation.md) — both install paths plus Google Cloud setup.
 - [Usage](docs/usage.md) — command reference, listener behavior, message examples.
 - [Configuration](docs/configuration.md) — full config table, precedence, secret handling.
+- [Shell completion](docs/SHELL_COMPLETION.md) — bash/zsh tab completion: auto-updating and static-file installs, prerequisites.
 - [Architecture](docs/architecture.md) — module responsibilities, data flow, protocol.
 - [Contributing](CONTRIBUTING.md) — dev setup and conventions.
 - [Changelog](CHANGELOG.md) — release history.

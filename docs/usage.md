@@ -12,6 +12,7 @@ This page covers the `cgc` CLI, the Claude Code plugin commands, the listener be
 |---|---|
 | `cgc config init` | Create the user config file in the OS config dir if it does not exist. |
 | `cgc config show` | Print the effective config (file + env merged). Secrets are masked. |
+| `cgc config get <key>` | Print one resolved value (secrets masked); exits non-zero on an unknown key. |
 | `cgc config set <key> <value>` | Write a value to the user config file. |
 
 ```bash
@@ -19,8 +20,11 @@ cgc config init
 cgc config set webhook_url "https://chat.googleapis.com/v1/spaces/AAAA/messages?key=...&token=..."
 cgc config set space_id "spaces/AAAA"
 cgc config set trigger_prefix "claude-command:"
+cgc config get space_id
 cgc config show
 ```
+
+Tab completion suggests known config keys for `cgc config get <key>` and `cgc config set <key>` (see [Shell completion](#shell-completion)).
 
 `cgc config show` never prints the full webhook token or the cached token-file contents.
 
@@ -35,6 +39,8 @@ cgc auth login
 ```
 
 Required only for reading inbound messages (`cgc listen`). Outbound sends use the webhook and need no OAuth. Fails fast if the OAuth client secrets file is missing.
+
+`--client-file <path>` overrides the configured `oauth_client_file` for a single run; the path is validated to exist and be readable before the flow starts.
 
 ### `cgc chat send`
 
@@ -53,12 +59,80 @@ cgc chat send --status error   --text "Migration failed on step 3"
 Start the inbound listener.
 
 ```bash
-cgc listen                  # run forever; idle timeout from CGC_LISTEN_TIMEOUT (0 = forever)
-cgc listen --once           # drain currently-pending messages and exit (for hooks/CI)
-cgc listen --timeout 300    # exit non-zero if idle for 300 seconds
+cgc listen                          # run forever; idle timeout from CGC_LISTEN_TIMEOUT (0 = forever)
+cgc listen --once                   # drain currently-pending messages and exit (for hooks/CI)
+cgc listen --timeout 300            # exit non-zero if idle for 300 seconds
+cgc listen --space-id spaces/AAAA   # override the configured space for this run
 ```
 
-Each new message is emitted as a single JSON line to stdout. Only messages whose text starts with the configured trigger prefix (default `claude-command:`) are surfaced as commands.
+Each new message is emitted as a single JSON line to stdout. Only messages whose text starts with the configured trigger prefix (default `claude-command:`) are surfaced as commands. `--space-id` overrides the configured `space_id` for one run; required keys are still checked and fail fast when missing.
+
+### `cgc serve`
+
+Run the always-listening responder, replying to owner messages as the app (service-account auth).
+
+```bash
+cgc serve                           # run forever
+cgc serve --once                    # handle pending owner messages once and exit
+cgc serve --timeout 600             # exit non-zero if idle for 600 seconds
+cgc serve --space-id spaces/AAAA    # override the configured space for this run
+```
+
+### `cgc clear`
+
+Delete trigger-prefixed messages from the configured space.
+
+```bash
+cgc clear                           # delete messages starting with the configured prefix
+cgc clear --trigger-prefix "ops:"   # override the prefix for this run
+```
+
+### `cgc completion`
+
+Print or install the tab-completion script for your shell. See [Shell completion](#shell-completion).
+
+```bash
+cgc completion bash                 # print the bash completion script to stdout
+cgc completion zsh --install        # append the completion line to ~/.zshrc
+```
+
+---
+
+## Shell completion
+
+> For the full bash/zsh guide — auto-updating vs static-file installs, the `bash-completion` prerequisite, and verification — see the [Shell completion guide](SHELL_COMPLETION.md).
+
+`cgc` ships full tab completion. There are two ways to enable it:
+
+1. **Typer-native flags** (auto-detect the current shell):
+
+   ```bash
+   cgc --install-completion         # install for the detected shell
+   cgc --show-completion            # print the script to copy/customize
+   ```
+
+2. **The friendlier `cgc completion` command** (explicit shell, idempotent install):
+
+   ```bash
+   cgc completion bash              # print the bash script
+   cgc completion zsh --install     # append an eval line to ~/.zshrc (idempotent)
+   cgc completion fish --install    # append a source line to ~/.config/fish/config.fish
+   ```
+
+   Supported shells are `bash`, `zsh`, and `fish`. An unsupported or undetectable shell fails fast with a clear message and a non-zero exit code. With `--install`, the line evaluates the program's live completion source on shell start-up, so completion always matches the installed CLI version.
+
+Once installed, tab completion suggests **commands, sub-groups, options, and arguments**, plus dynamic values:
+
+| Where | Completes |
+|---|---|
+| `cgc config get <key>` / `cgc config set <key>` | Known config keys (with their `CGC_*` env-var hints). |
+| `cgc chat send --status <TAB>` | `info`, `working`, `success`, `error`, `blocked`. |
+| `cgc completion <shell>` / `--shell` | `bash`, `zsh`, `fish`. |
+| `cgc auth login --client-file <TAB>` | File paths (native shell file completion). |
+| `cgc serve --space-id` / `cgc listen --space-id` | The `space_id` from your current config, if set. |
+| `cgc clear --trigger-prefix` | The `trigger_prefix` from your current config. |
+
+Dynamic completers never crash your shell: any error simply yields no suggestions.
 
 ---
 
