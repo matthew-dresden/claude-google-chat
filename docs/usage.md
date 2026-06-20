@@ -211,7 +211,9 @@ Once installed, tab completion suggests **commands, sub-groups, options, and arg
 | `cgc chat send --status <TAB>` | `info`, `working`, `success`, `error`, `blocked`. |
 | `cgc completion <shell>` / `--shell` | `bash`, `zsh`, `fish`. |
 | `cgc auth login --client-file <TAB>` | File paths (native shell file completion). |
-| `cgc listen --space-id` | The `space_id` from your current config, if set. |
+| `cgc connect <name>` / `cgc disconnect <name>` / `cgc listen --session` | Registered session names from your `sessions_file`. |
+| `cgc connect --space` / `cgc listen --space-id` | The `space_id` from your current config, if set. |
+| `cgc listen --thread` | The configured `threads`, if any. |
 | `cgc clear --trigger-prefix` | The `trigger_prefix` from your current config. |
 
 Dynamic completers never crash your shell: any error simply yields no suggestions.
