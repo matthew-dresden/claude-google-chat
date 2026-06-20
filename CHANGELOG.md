@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Plugin layer rewritten for the session-bound, multi-session model.** The Claude Code commands and skill now match the CLI source of truth (`cgc connect`/`disconnect`/`session list`, `cgc listen --session NAME`, `cgc chat send --thread-key`, the dispatcher, `cgc setup`, `cgc doctor`):
+  - **Slash commands** replaced — `commands/chat-setup.md`, `commands/chat-send.md`, `commands/chat-listener.md` are removed in favour of `commands/connect.md`, `commands/disconnect.md`, `commands/send.md`, `commands/setup.md` (all `disable-model-invocation: true`, `allowed-tools: Bash`).
+    - **`/claude-google-chat:connect [name]`** — runs `cgc doctor` (stops with the printed fix on any red), `cgc connect [name]` to register the session and open its primary thread, then arms `cgc listen --session <name>` and, for each emitted JSON message event (carrying `text` + `thread_name`), does the requested work and replies in-thread via `cgc chat send --thread-key <thread_name>`; finally tells the user the session name and how to talk to it (reply in its thread, or start a new thread with `name: ...`), noting the dispatcher behavior for unrouted messages.
+    - **`/claude-google-chat:disconnect [name]`** — runs `cgc disconnect [name]`.
+    - **`/claude-google-chat:send <status> <text>`** — runs `cgc chat send` (mentions `--thread-key` when replying within a session thread).
+    - **`/claude-google-chat:setup`** — runs `cgc setup` (and `cgc doctor` to diagnose). All four commands tell the user to run setup/install when `cgc` is missing from `PATH`.
+  - **`skills/google-chat/SKILL.md`** rewritten to document the **session-bound protocol**: one shared space, thread-per-session (a session owns multiple threads), name-prefix routing for new threads, the dispatcher menu for unrouted messages, clean human replies (no envelope unless `--envelope`), and how Claude consumes `cgc listen --session` JSON events and replies in-thread. Removed the prior service-account/serve/app-auth protocol content.
+  - **Manifests** — `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` descriptions updated to the session-bound command set (connect/disconnect/send/setup); manifests remain valid JSON (CI manifest validation passes).
+  - **Docs** — `README.md` Usage/plugin sections, `docs/usage.md`, `docs/installation.md`, and `docs/architecture.md` updated to the connect/disconnect plugin flow.
+
 ### Added
 
 - **Foolproof onboarding: `cgc setup` (guided wizard) + `cgc doctor` (diagnostics).** Onboarding is now a single command. All gcloud, OAuth/ADC, and network calls go through injectable runner interfaces (`probes.py`), so the whole flow is unit-tested with fakes — no test touches the network, gcloud, real disk, or `sleep`.

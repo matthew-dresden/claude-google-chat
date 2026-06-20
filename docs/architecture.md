@@ -8,8 +8,8 @@
 
 ### Plugin layer
 
-- **`commands/*.md`** — slash commands (`chat-setup`, `chat-send`, `chat-listener`). Each becomes `/claude-google-chat:<name>`. They have side effects, so they set `disable-model-invocation: true` and invoke `cgc` via `Bash`.
-- **`skills/google-chat/SKILL.md`** — informational skill documenting the ChatOps protocol so Claude can read and produce structured messages. No side effects; model invocation stays enabled.
+- **`commands/*.md`** — slash commands (`connect`, `disconnect`, `send`, `setup`). Each becomes `/claude-google-chat:<name>`. They have side effects, so they set `disable-model-invocation: true` and invoke `cgc` via `Bash`. `connect` is the session-bound entry point: it runs `cgc doctor`, `cgc connect`, then arms `cgc listen --session <name>` and replies in-thread via `cgc chat send --thread-key`.
+- **`skills/google-chat/SKILL.md`** — informational skill documenting the session-bound ChatOps protocol (one shared space, thread-per-session, name-prefix routing, the dispatcher menu, and consuming `cgc listen --session` JSON events) so Claude can route, read, and produce structured messages. No side effects; model invocation stays enabled.
 - **`hooks/hooks.json`** — optional `Stop`-hook ping. It runs `cgc chat send`, which **requires `webhook_url`** (`CGC_WEBHOOK_URL`). Until that value is configured the hook fails fast on every session stop (correct fail-fast behaviour for the command); configure `webhook_url` before relying on the hook, or remove the hook until setup is complete.
 - **`.claude-plugin/plugin.json`** / **`marketplace.json`** — plugin and marketplace manifests.
 
@@ -68,9 +68,9 @@ flowchart LR
     GCAPI --> GCW
 ```
 
-**Outbound (status pings):** Claude runs `/claude-google-chat:chat-send` → `cgc chat send` → `chat.send_webhook` formats a `ChatMessage` via `messages.format_message` and POSTs it to the incoming webhook URL. No OAuth required.
+**Outbound (status pings / replies):** Claude runs `/claude-google-chat:send` → `cgc chat send` → `chat.send_webhook` formats a `ChatMessage` via `messages.format_message` and POSTs it to the incoming webhook URL (with `--thread-key <thread_name>` to reply within a session thread). No OAuth required.
 
-**Inbound (commands):** Claude runs `/claude-google-chat:chat-listener` → `cgc listen` → `listener.Listener` polls the space via the Chat REST API (using OAuth credentials from `auth.load_credentials`), parses each new trigger-prefixed message via `messages.parse_message`, and emits it as a JSON line on stdout for Claude to act on.
+**Inbound (session-routed commands):** Claude runs `/claude-google-chat:connect` → `cgc connect` registers the session and opens its primary thread, then `cgc listen --session <name>` → `listener.Listener` (wired with a `sessionrouter.SessionRouter`) polls the space via the Chat REST API (using OAuth credentials from `auth.load_credentials`), routes each new HUMAN message to the listening session (reply-in-claimed-thread, `name:`-claims-a-new-thread, or the dispatcher menu for unrouted threads), and emits the routed message as a JSON line on stdout (carrying `thread_name` + `session_name`) for Claude to act on and reply in-thread.
 
 ---
 
