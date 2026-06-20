@@ -1,3 +1,19 @@
+# ⚠️ NOT READY — DO NOT USE ⚠️
+
+> [!CAUTION]
+> ## 🚧 THIS PROJECT IS NOT READY FOR ANY USE. DO NOT INSTALL OR RELY ON IT. 🚧
+>
+> **This repository is experimental, incomplete, and under active development. Everything is subject to change without notice — APIs, commands, config, behavior, and documentation can break or disappear at any time.**
+>
+> - ❌ **Do NOT install it.** Do NOT use it in any project, automation, or production system.
+> - ❌ **Do NOT rely on it.** There are no stability or compatibility guarantees of any kind.
+> - ℹ️ **Why is it public, then?** This repo is public **only** to use GitHub's free features (Actions/CI, Pages, etc.) during development. Public visibility is **not** an endorsement that it works or is ready.
+> - 📝 **The README will be rewritten** and a stable **v1.0.0** release will be cut when — and only when — the project is actually ready for use.
+>
+> **Until a tagged `v1.0.0` release exists, treat everything below as a work-in-progress draft, not instructions you should follow.**
+
+---
+
 # claude-google-chat
 
 > Two-way Google Chat ChatOps integration for Claude Code — a Claude Code plugin plus a Python CLI (`cgc`).
