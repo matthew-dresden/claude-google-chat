@@ -1,0 +1,33 @@
+# gitleaks configuration for claude-google-chat (PUBLIC repo).
+#
+# Extends the built-in gitleaks default ruleset and adds a project allowlist
+# for KNOWN-SAFE placeholders and test fixtures so CI does not false-positive.
+# Real secrets are still caught: nothing below weakens detection of genuine
+# credentials — it only permits documented dummy values used in docs and tests.
+#
+# Used by both the pre-commit hook and the .github/workflows/gitleaks.yml CI job
+# (gitleaks reads ./.gitleaks.toml automatically when present).
+
+# Inherit all default rules; the allowlist below is layered on top of them.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known-safe placeholders and test fixtures (no real secrets)."
+
+# Paths that contain only synthetic fixtures / templates. The TOML fixtures
+# under tests/data/ carry deliberately fake webhook URLs and dummy tokens.
+paths = [
+  '''tests/data/.*\.toml$''',
+  '''terraform/templates/config\.toml\.tftpl$''',
+]
+
+# Literal/regex matches for the documented dummy values that appear in fixtures,
+# docs, and README examples. These are placeholders, never live credentials.
+regexes = [
+  '''SECRETKEY''',
+  '''SECRETTOKEN''',
+  '''spaces/AAAA''',
+  '''key=\.\.\.&token=\.\.\.''',
+  '''/tmp/client_secret\.json''',
+]

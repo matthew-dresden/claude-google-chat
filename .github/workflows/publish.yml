@@ -90,12 +90,12 @@ jobs:
       id-token: write   # required for OIDC trusted publishing (Option A)
     steps:
       - name: Checkout the release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ needs.validate-version.outputs.tag }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8
 
       - name: Install dependencies
         shell: bash
